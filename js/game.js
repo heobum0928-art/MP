@@ -154,27 +154,121 @@ const SFX = {
   whoosh: () => { noise(0.45, 0.12, 2200); tone(260, 0.4, 'sine', 0.05, 2.2); },
 };
 
-// 월드별 간단한 칩튠 루프 (베이스 + 아르페지오)
-function startMusic(worldIdx) {
+// 중세 유럽풍 배경음악: 6/8 지그 리듬 · 탬버 북 · 백파이프식 5도 드론 · 류트 아르페지오 · 리코더 멜로디
+// 월드별 중세 선법 (반음 간격)
+const MODES = {
+  dorian: [0, 2, 3, 5, 7, 9, 10], mixolydian: [0, 2, 4, 5, 7, 9, 10], aeolian: [0, 2, 3, 5, 7, 8, 10],
+  lydian: [0, 2, 4, 6, 7, 9, 11], phrygian: [0, 1, 3, 5, 7, 8, 10], ionian: [0, 2, 4, 5, 7, 9, 11],
+};
+const TUNES = {
+  forest:  { root: 62, mode: 'mixolydian', bpm: 118 },   // 밝은 시골 축제
+  fort:    { root: 55, mode: 'dorian',     bpm: 128 },   // 씩씩한 행진
+  castle:  { root: 57, mode: 'aeolian',    bpm: 100 },   // 으스스한 성
+  snow:    { root: 65, mode: 'lydian',     bpm: 110 },   // 반짝이는 설원
+  volcano: { root: 52, mode: 'phrygian',   bpm: 132 },   // 긴박한 결전
+  lair:    { root: 50, mode: 'dorian',     bpm: 138 },   // 용과의 전투
+  title:   { root: 62, mode: 'ionian',     bpm: 96 },
+};
+
+function drum(kind, when) {
+  if (!AU.ctx) return;
+  const t = AU.ctx.currentTime + when;
+  if (kind === 'tabor') {       // 가죽 북: 낮은 통 소리 + 짧은 잡음
+    const o = AU.ctx.createOscillator(), g = AU.ctx.createGain();
+    o.type = 'sine'; o.frequency.setValueAtTime(190, t); o.frequency.exponentialRampToValueAtTime(90, t + 0.1);
+    g.gain.setValueAtTime(0.2, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+    o.connect(g); g.connect(AU.bgm); o.start(t); o.stop(t + 0.25);
+  }
+  const dur = kind === 'tabor' ? 0.05 : 0.09;
+  const len = Math.floor(AU.ctx.sampleRate * dur);
+  const buf = AU.ctx.createBuffer(1, len, AU.ctx.sampleRate), d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len) ** 3;
+  const src = AU.ctx.createBufferSource(); src.buffer = buf;
+  const f = AU.ctx.createBiquadFilter();
+  f.type = kind === 'tabor' ? 'lowpass' : 'highpass'; f.frequency.value = kind === 'tabor' ? 900 : 6500;   // jingle = 탬버린 방울
+  const g = AU.ctx.createGain(); g.gain.value = kind === 'tabor' ? 0.12 : 0.04;
+  src.connect(f); f.connect(g); g.connect(AU.bgm); src.start(t);
+}
+
+// 류트: 짧게 뜯는 소리 (삼각파 + 살짝 어긋난 사각파, 빠른 감쇠)
+function lute(freq, when, vol = 0.05) {
+  tone(freq, 0.35, 'triangle', vol, 1, when, AU.bgm);
+  tone(freq * 1.003, 0.12, 'square', vol * 0.25, 1, when, AU.bgm);
+}
+// 리코더: 사인파 + 떨림(비브라토)
+function recorder(freq, dur, when, vol = 0.05) {
+  if (!AU.ctx) return;
+  const t = AU.ctx.currentTime + when;
+  const o = AU.ctx.createOscillator(), g = AU.ctx.createGain();
+  const lfo = AU.ctx.createOscillator(), lg = AU.ctx.createGain();
+  o.type = 'sine'; o.frequency.setValueAtTime(freq, t);
+  lfo.frequency.value = 5.5; lg.gain.value = freq * 0.012;
+  lfo.connect(lg); lg.connect(o.frequency);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol, t + 0.04);
+  g.gain.setValueAtTime(vol, t + dur * 0.7);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g); g.connect(AU.bgm);
+  o.start(t); lfo.start(t); o.stop(t + dur + 0.02); lfo.stop(t + dur + 0.02);
+}
+// 백파이프식 드론: 근음 + 5도를 길게
+function drone(freq, dur, when) {
+  tone(freq, dur, 'sawtooth', 0.012, 1, when, AU.bgm);
+  tone(freq * 1.5, dur, 'triangle', 0.02, 1, when, AU.bgm);
+}
+
+function makeTune(seed) {
+  // 2마디(6/8 × 2 = 12 스텝) 멜로디 두 개 — 계단식으로 오르내리는 민요풍
+  let x = seed * 7919 + 17;
+  const rnd = () => (x = (x * 9301 + 49297) % 233280) / 233280;
+  const phrase = () => {
+    const out = []; let deg = 4;
+    for (let i = 0; i < 12; i++) {
+      const long = i % 3 === 0 && rnd() < 0.45;        // 강박에 긴 음
+      deg = clamp(deg + [-2, -1, -1, 1, 1, 2][Math.floor(rnd() * 6)], 0, 9);
+      if (i === 11) deg = 0;                              // 으뜸음으로 마침
+      out.push({ deg, len: long ? 2 : 1 });
+      if (long) { out.push(null); i++; }
+    }
+    return out.slice(0, 12);
+  };
+  return [phrase(), phrase()];
+}
+
+function startMusic(worldIdx, title = false) {
   stopMusic();
   if (!AU.ctx || !SAVE.music) return;
-  const m = WORLDS[worldIdx].music;
+  const tune = title ? TUNES.title : (TUNES[WORLDS[worldIdx].scenery] || TUNES.forest);
+  const mode = MODES[tune.mode];
   const midi = (n) => 440 * Math.pow(2, (n - 69) / 12);
-  const prog = [0, 3, 1, 4];       // 4마디 진행 (스케일 도수 이동)
-  const arp = [0, 2, 4, 2, 3, 4, 2, 1];
+  const note = (deg) => mode[((deg % 7) + 7) % 7] + 12 * Math.floor(deg / 7);
+  const [melA, melB] = makeTune(worldIdx + (title ? 50 : 1));
+  const chords = [0, 3, 4, 0, 5, 3, 4, 0];               // 도수 진행 (8마디)
   let step = 0, next = AU.ctx.currentTime + 0.1;
   AU.timer = setInterval(() => {
-    const spb = 60 / m.tempo / 2 * (S.fever > 0 ? 0.8 : 1);
-    while (next < AU.ctx.currentTime + 0.25) {
-      const bar = Math.floor(step / 8) % prog.length;
-      const deg = (i) => { const k = i + prog[bar]; return m.scale[k % m.scale.length] + 12 * Math.floor(k / m.scale.length); };
+    const sp8 = 60 / tune.bpm / 2 * (S.fever > 0 ? 0.82 : 1);   // 8분음표
+    while (next < AU.ctx.currentTime + 0.3) {
       const when = next - AU.ctx.currentTime;
-      if (step % 4 === 0) tone(midi(m.root - 24 + deg(0)), spb * 3.2, 'triangle', 0.07, 1, when, AU.bgm);
-      if (step % 2 === 0 || S.fever > 0) tone(midi(m.root + deg(arp[step % 8])), spb * 0.8, 'square', 0.022, 1, when, AU.bgm);
-      if (step % 8 === 4) tone(midi(m.root + 12 + deg(4)), spb * 1.5, 'sine', 0.02, 1, when, AU.bgm);
-      step++; next += spb;
+      const s6 = step % 6, bar = Math.floor(step / 6);
+      const chordDeg = chords[bar % 8];
+      const croot = tune.root - 12 + note(chordDeg);
+      // 탬버 북 (쿵-짝 6/8)
+      if (!title || s6 === 0) {
+        if (s6 === 0 || s6 === 3) drum('tabor', when);
+        if (!title && (s6 === 5 || S.fever > 0 && s6 % 2)) drum('jingle', when);
+      }
+      // 드론 (2마디마다 새로)
+      if (step % 12 === 0) drone(midi(tune.root - 24), sp8 * 12.5, when);
+      // 류트: 근음-5도-옥타브-5도-3도-5도
+      const arp = [0, 4, 7, 4, 2, 4][s6];
+      lute(midi(croot + note(chordDeg + arp) - note(chordDeg)), when, title ? 0.04 : 0.05);
+      // 리코더 멜로디: A A B A (8마디)
+      const phrase = (Math.floor(bar / 2) % 4 === 2) ? melB : melA;
+      const n = phrase[(bar % 2) * 6 + s6];
+      if (n) recorder(midi(tune.root + 12 + note(n.deg)), sp8 * n.len * 0.95, when, title ? 0.04 : 0.05);
+      step++; next += sp8;
     }
-  }, 60);
+  }, 50);
 }
 function stopMusic() { if (AU.timer) { clearInterval(AU.timer); AU.timer = null; } }
 
@@ -373,6 +467,7 @@ function setState(st) { S.state = st; S.stateT = 0; }
 
 function showMenu() {
   stopMusic(); hideBanner();
+  if (AU.ctx) startMusic(0, true);
   setState('menu');
   document.body.classList.remove('playing');
   UI.hud.classList.add('hidden'); UI.bossBar.classList.add('hidden');
@@ -1310,23 +1405,65 @@ function drawCam() {
   }
 }
 
-function drawRail() {
-  const rail = S.stage ? WORLDS[S.world].rail : '110,231,255';
+// 월드별 길: 불투명한 바닥 + 발밑으로 흘러오는 타일 → 앞으로 달리는 느낌
+const GROUND = {
+  forest:  { road: ['#b8895a', '#a97b4c'], side: ['#4fa046', '#46913e'], edge: '#7a5a36', lines: 'rgba(90,60,30,.35)' },
+  fort:    { road: ['#a06c38', '#8d5d2e'], side: ['#6e913b', '#628435'], edge: '#5b3a1e', lines: 'rgba(40,20,5,.55)', planks: true },
+  castle:  { road: ['#716a86', '#625c77'], side: ['#2e2940', '#28233a'], edge: '#9a93b3', lines: 'rgba(20,15,35,.5)', tiles: true },
+  snow:    { road: ['#e6eefa', '#d6e2f3'], side: ['#f7fbff', '#eef4fc'], edge: '#9fbde0', lines: 'rgba(120,150,190,.3)' },
+  volcano: { road: ['#3d2c2b', '#352524'], side: ['#1f1515', '#261919'], edge: '#ff6a2a', lines: 'rgba(255,110,40,.35)', lava: true },
+  lair:    { road: ['#3c2549', '#331f40'], side: ['#1d1227', '#231630'], edge: '#d27bff', lines: 'rgba(210,123,255,.3)', lava: true },
+};
+const ROAD_W = 0.62, GROUND_Y = 0.34, BAND = 0.09;
+
+function drawGround() {
+  const g = GROUND[WORLDS[S.world].scenery] || GROUND.forest;
+  const off = S.roadZ % (BAND * 2);
+  const zFar = 1.25;
   ctx.save();
-  ctx.strokeStyle = `rgba(${rail},.22)`; ctx.lineWidth = 1.5;
-  for (let i = -4; i <= 4; i++) {
-    const a = toScreen(i * 0.2, 0.34, 1.2), b = toScreen(i * 0.2, 0.34, 0);
-    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-  }
-  const flow = (S.stageT * 0.45) % 0.2;
-  for (let k = 0; k < 7; k++) {
-    const z = 1.2 - (k * 0.2 + flow);
-    if (z <= 0.01) continue;
-    const a = toScreen(-0.8, 0.34, z), b = toScreen(0.8, 0.34, z);
-    ctx.globalAlpha = clamp(1.1 - z, 0.1, 0.7);
-    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  ctx.globalAlpha = 0.92;
+  // 먼 곳 → 가까운 곳 순으로 띠를 그림
+  for (let z = zFar + off; z > -0.25; z -= BAND) {
+    const z0 = Math.min(z, zFar), z1 = Math.max(z - BAND, -0.25);
+    if (z0 <= z1) continue;
+    const a = toScreen(0, GROUND_Y, z0), b = toScreen(0, GROUND_Y, z1);
+    if (a.y > H) break;
+    const even = Math.floor((z + S.roadZ) / BAND + 1000) % 2 === 0;
+    const yb = Math.min(b.y, H + 2);
+    // 양옆 들판
+    ctx.fillStyle = g.side[even ? 0 : 1];
+    ctx.fillRect(0, a.y, W, yb - a.y + 1);
+    // 길
+    const L0 = toScreen(-ROAD_W, GROUND_Y, z0).x, R0 = toScreen(ROAD_W, GROUND_Y, z0).x;
+    const L1 = toScreen(-ROAD_W, GROUND_Y, z1).x, R1 = toScreen(ROAD_W, GROUND_Y, z1).x;
+    ctx.fillStyle = g.road[even ? 0 : 1];
+    ctx.beginPath(); ctx.moveTo(L0, a.y); ctx.lineTo(R0, a.y); ctx.lineTo(R1, b.y); ctx.lineTo(L1, b.y); ctx.closePath(); ctx.fill();
+    // 가로 줄눈 (판자·돌 타일)
+    ctx.strokeStyle = g.lines; ctx.lineWidth = Math.max(1, (b.y - a.y) * 0.08);
+    ctx.beginPath(); ctx.moveTo(L0, a.y); ctx.lineTo(R0, a.y); ctx.stroke();
+    if (g.planks || g.tiles) {       // 세로 줄눈
+      const n = g.planks ? 1 : 4;
+      for (let i = 1; i < n + 1; i++) {
+        const t = i / (n + 1) * 2 - 1 + (g.tiles && even ? 0.12 : 0);
+        const x0 = toScreen(t * ROAD_W, GROUND_Y, z0).x, x1 = toScreen(t * ROAD_W, GROUND_Y, z1).x;
+        ctx.beginPath(); ctx.moveTo(x0, a.y); ctx.lineTo(x1, b.y); ctx.stroke();
+      }
+    }
+    // 길 가장자리
+    const EW = 0.07;
+    const eL0 = toScreen(-ROAD_W - EW, GROUND_Y, z0).x, eL1 = toScreen(-ROAD_W - EW, GROUND_Y, z1).x;
+    const eR0 = toScreen(ROAD_W + EW, GROUND_Y, z0).x, eR1 = toScreen(ROAD_W + EW, GROUND_Y, z1).x;
+    ctx.fillStyle = g.lava ? `rgba(255,${even ? 120 : 80},40,${0.75 + 0.25 * Math.sin(performance.now() / 250 + z * 20)})` : g.edge;
+    if (g.lava && WORLDS[S.world].scenery === 'lair') ctx.fillStyle = `rgba(210,${even ? 123 : 90},255,${0.7 + 0.3 * Math.sin(performance.now() / 250 + z * 20)})`;
+    ctx.beginPath(); ctx.moveTo(eL0, a.y); ctx.lineTo(L0, a.y); ctx.lineTo(L1, b.y); ctx.lineTo(eL1, b.y); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(R0, a.y); ctx.lineTo(eR0, a.y); ctx.lineTo(eR1, b.y); ctx.lineTo(R1, b.y); ctx.closePath(); ctx.fill();
   }
   ctx.restore();
+  // 지평선 안개 (먼 곳이 부드럽게 사라짐)
+  const yh = toScreen(0, GROUND_Y, zFar).y;
+  const fog = ctx.createLinearGradient(0, yh - 2, 0, yh + H * 0.08);
+  fog.addColorStop(0, 'rgba(10,12,24,.55)'); fog.addColorStop(1, 'rgba(10,12,24,0)');
+  ctx.fillStyle = fog; ctx.fillRect(0, yh - 2, W, H * 0.08 + 2);
 }
 
 function drawMonster(m) {
@@ -1467,7 +1604,8 @@ function drawBodies() {
   const T = TRACK[S.trackMode];
   ctx.save();
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  S.landmarks.forEach((body, bi) => {
+  S.landmarks.forEach((body) => {
+    const bi = body.slot ?? 0;
     const P = body.map(lmToScreen);
     const vis = (i) => !T.minVis || (body[i].visibility ?? 1) >= T.minVis;
     ctx.strokeStyle = PLAYER_COLORS[bi % PLAYER_COLORS.length];
@@ -1577,7 +1715,7 @@ function render(dt) {
   drawCam();
   if (S.stage) {
     drawHorizon();
-    drawRail();
+    drawGround();
     drawProps();
     drawAmbient();
     for (const m of S.monsters) drawMonster(m);
@@ -1625,16 +1763,15 @@ function track(nowMs, dt) {
     return;
   }
   S.detectMs = S.detectMs * 0.8 + (performance.now() - t0) * 0.2;
-  // 서 있는 위치(화면 왼쪽→오른쪽) 순으로 정렬해 1P·2P·3P를 고정
-  const anchor = S.trackMode === 'pose' ? 0 : 0;
-  S.landmarks = (res.landmarks || []).slice().sort((a, b) => lmToScreen(a[anchor]).x - lmToScreen(b[anchor]).x);
+  // 사람마다 번호(slot)를 고정: 앞 프레임 위치와 가장 가까운 사람에게 같은 번호
+  S.landmarks = assignSlots(res.landmarks || []);
   if (S.trackMode === 'pose' && S.landmarks.length > 1 && S.stage) S.multi = true;
-  // 인원이 바뀌면 이전 위치 기록을 버림 (다른 아이 손으로 이어진 가짜 궤적 방지)
-  if (S.landmarks.length !== lastBodyCount) { prevPts.clear(); lastBodyCount = S.landmarks.length; }
+  lastBodyCount = S.landmarks.length;
   const maxJump = shortSide() * 0.35;
   const T = TRACK[S.trackMode];
   const seen = new Set();
-  S.landmarks.forEach((body, bi) => {
+  S.landmarks.forEach((body) => {
+    const bi = body.slot;
     for (const id of T.hitIds) {
       const lm = body[id];
       if (T.minVis && (lm.visibility ?? 1) < T.minVis) continue;
@@ -1646,12 +1783,52 @@ function track(nowMs, dt) {
       const x = prev ? prev.x + (raw.x - prev.x) * 0.65 : raw.x;
       const y = prev ? prev.y + (raw.y - prev.y) * 0.65 : raw.y;
       if (prev && Math.hypot(x - prev.x, y - prev.y) > maxJump) { prevPts.set(key, { x, y }); continue; }   // 순간이동 = 인식 뒤바뀜
-      const pl = S.trackMode === 'pose' ? bi : Math.floor(bi / 2);
+      const pl = S.trackMode === 'pose' ? bi : Math.floor(bi / 2);   // 손 모드: 두 손 = 한 사람
       if (prev) S.points.push({ x, y, px: prev.x, py: prev.y, speed: Math.hypot(x - prev.x, y - prev.y) / vdt, pl });
       prevPts.set(key, { x, y });
     }
   });
   for (const k of [...prevPts.keys()]) if (!seen.has(k)) prevPts.delete(k);
+}
+
+// 번호 고정 추적: 어깨(손 모드는 손목) 중심을 앞 프레임 기록과 매칭
+const tracks = [];   // { slot, x, y, seen }
+function assignSlots(bodies) {
+  const now = performance.now();
+  const maxSlots = S.trackMode === 'pose' ? CFG.maxPlayers : CFG.maxPlayers * 2;
+  const center = (b) => {
+    const pts = S.trackMode === 'pose' ? [b[11], b[12]] : [b[0], b[9]];
+    const P = pts.map(lmToScreen);
+    return { x: (P[0].x + P[1].x) / 2, y: (P[0].y + P[1].y) / 2 };
+  };
+  const cs = bodies.map(center);
+  const used = new Set(), taken = new Set();
+  // 가까운 쌍부터 연결
+  const pairs = [];
+  cs.forEach((c, bi) => tracks.forEach((t, ti) => pairs.push({ bi, ti, d: Math.hypot(c.x - t.x, c.y - t.y) })));
+  pairs.sort((a, b) => a.d - b.d);
+  const slotOf = new Array(bodies.length).fill(-1);
+  for (const p of pairs) {
+    if (used.has(p.bi) || taken.has(p.ti) || p.d > W * 0.3) continue;
+    used.add(p.bi); taken.add(p.ti);
+    slotOf[p.bi] = tracks[p.ti].slot;
+    Object.assign(tracks[p.ti], cs[p.bi], { seen: now });
+  }
+  // 오래 안 보인 기록은 번호 반납 (2초)
+  for (let i = tracks.length - 1; i >= 0; i--) if (!taken.has(i) && now - tracks[i].seen > 2000) tracks.splice(i, 1);
+  // 새로 들어온 사람 = 비어 있는 가장 작은 번호
+  bodies.forEach((b, bi) => {
+    if (slotOf[bi] >= 0) return;
+    const busy = new Set(tracks.map(t => t.slot));
+    let slot = 0; while (busy.has(slot) && slot < maxSlots) slot++;
+    if (slot >= maxSlots) slot = bi;
+    slotOf[bi] = slot;
+    tracks.push({ slot, ...cs[bi], seen: now });
+    // 새 사람은 이전 손 위치가 없어야 가짜 궤적이 안 생김
+    for (const k of [...prevPts.keys()]) if (k.startsWith(slot + '-')) prevPts.delete(k);
+  });
+  bodies.forEach((b, bi) => { b.slot = slotOf[bi]; });
+  return bodies.slice().sort((a, b) => a.slot - b.slot);
 }
 
 async function initCamera() {
@@ -1784,7 +1961,10 @@ function frame(ts) {
   S.flashRed = Math.max(0, S.flashRed - dt * 3);
   S.soot = Math.max(0, (S.soot || 0) - dt);
   S.toastT = Math.max(0, S.toastT - dt);
-  if (S.stage) { updateAmbient(dt); updateProps(dt, S.state === 'play'); }
+  if (S.stage) {
+    updateAmbient(dt); updateProps(dt, S.state === 'play');
+    S.roadZ = (S.roadZ || 0) + CFG.propSpeed * dt * (S.state === 'play' ? 1 : 0.3) * (S.fever > 0 ? 1.4 : 1);
+  }
 
   switch (S.state) {
     case 'ready':
@@ -1829,7 +2009,10 @@ $('mapBack').addEventListener('click', showMenu);
 
 const musicBtn = $('musicBtn'), voiceBtn = $('voiceBtn');
 function syncToggles() { musicBtn.classList.toggle('on', SAVE.music); voiceBtn.classList.toggle('on', SAVE.voice); }
-musicBtn.addEventListener('click', () => { SAVE.music = !SAVE.music; persist(); syncToggles(); });
+musicBtn.addEventListener('click', () => {
+  SAVE.music = !SAVE.music; persist(); syncToggles();
+  if (SAVE.music && S.state === 'menu') startMusic(0, true); else if (!SAVE.music) stopMusic();
+});
 voiceBtn.addEventListener('click', () => { SAVE.voice = !SAVE.voice; persist(); syncToggles(); if (SAVE.voice) say('음성 안내를 켰어요'); });
 syncToggles();
 
@@ -1845,8 +2028,15 @@ document.addEventListener('visibilitychange', () => {
 // 타이틀 마스코트
 UI.mascots.innerHTML = ['slime', 'goblin', 'knight', 'archer', 'dragon'].map(k => `<img src="${spriteURL(k)}" alt="">`).join('');
 
+// 첫 터치에 오디오 잠금 해제 → 타이틀 음악
+document.addEventListener('pointerdown', () => {
+  const first = !AU.ctx;
+  initAudio();
+  if (first && S.state === 'menu') startMusic(0, true);
+}, { once: false, capture: true });
+
 loadSprites();
 requestAnimationFrame((t) => { S.lastTs = t; loop(t); });
 
 // 디버그용 (콘솔에서 상태 확인)
-window.__game = { S, SAVE, SPR, startStage, showMap, frame, spawn, spawnBoss };
+window.__game = { S, SAVE, SPR, startStage, showMap, frame, spawn, spawnBoss, assignSlots, startMusic, initAudio };
