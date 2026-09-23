@@ -619,6 +619,9 @@ function spawn(kind, o = {}) {
     cd: 0, flash: 0, blinkAt: rand(1, 4), blinkT: 0, alpha: 1, scale: K.scale || 1,
     sx: 0, sy: 0, r: 0, dead: false, boss: !!K.boss,
     mode: 'approach', shots: K.shots || 0, shotT: 0.6,
+    age: 0,
+    entry: K.item || K.proj ? 'pop' : (['wave', 'zigzag', 'fade', 'dash'].includes(K.move) ? 'fly'
+      : (['run', 'hop', 'archer', 'bob'].includes(K.move) && !K.boss ? 'ground' : 'pop')),
   };
   m.baseWx = m.wx;
   if (K.move === 'float') { m.dir = Math.random() < 0.5 ? -1 : 1; m.wx = m.baseWx = -m.dir * 0.5; m.z = 0.75; }
@@ -702,6 +705,7 @@ function updateMonsters(dt, baseSpeed) {
     if (m.dead) continue;
     const K = m.K;
     m.t += dt;
+    m.age += dt;
     m.cd = Math.max(0, m.cd - dt);
     m.flash = Math.max(0, m.flash - dt * 5);
     m.blinkAt -= dt;
@@ -758,10 +762,33 @@ function updateMonsters(dt, baseSpeed) {
   S.monsters.sort((a, b) => b.z - a.z);
 }
 
+const ENTRY_T = 0.55;
+const easeOutBack = (x) => 1 + 2.7 * Math.pow(x - 1, 3) + 1.7 * Math.pow(x - 1, 2);
 function project1(m) {
-  const P = toScreen(m.wx + m.ox, m.wy + m.oy, m.z);
+  let oy = m.oy;
+  const e = clamp(m.age / ENTRY_T, 0, 1);
+  if (e < 1) {
+    if (m.entry === 'ground') oy += (1 - e) * (1 - e) * 0.3;        // 땅에서 솟아오름
+    else if (m.entry === 'fly') oy -= (1 - e) * (1 - e) * 0.7;      // 하늘에서 내려옴
+  }
+  const P = toScreen(m.wx + m.ox, m.wy + oy, m.z);
   m.sx = P.x; m.sy = P.y;
   m.r = baseR() * P.p * m.scale * (m.boss ? CFG.bossScale : 1);
+  m.pop = m.entry === 'pop' ? Math.max(0.05, easeOutBack(e)) : 1;
+  if (!m.puffed) { m.puffed = true; entryPuff(m); }
+}
+function entryPuff(m) {
+  if (m.K.proj) return;
+  const ground = m.entry === 'ground';
+  const baseY = ground ? m.sy + m.r : m.sy;
+  for (let i = 0; i < (m.boss ? 26 : 12); i++) {
+    const a = ground ? rand(Math.PI * 1.05, Math.PI * 1.95) : rand(0, Math.PI * 2);
+    const sp = rand(0.5, 1.4) * m.r * 2.2;
+    S.fx.push({ x: m.sx + rand(-m.r, m.r) * 0.6, y: baseY, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+      life: rand(0.5, 0.8), size: m.r * rand(0.18, 0.32), hue: ground ? 30 : 0, rect: false, rot: 0, vr: 0,
+      smoke: true, gentle: true });
+  }
+  if (m.entry === 'pop') SFX.pop();
 }
 
 function reach(m) {
@@ -1332,8 +1359,11 @@ function drawMonster(m) {
       else if (m.blinkT > 0) frame = 2;
       else if (running && imgs[4]) frame = Math.sin(m.t * (m.boss ? 7 : 11) + m.phase) > 0 ? 4 : 5;
       else frame = Math.sin(m.t * 6) > 0.55 ? 1 : 0;
+      // 공격 준비: 보스 공격 직전 / 궁수 발사 직전 → 입 벌리고 팔 번쩍 + 부르르
+      const windup = imgs[6] && ((m.boss && m.mode === 'fight' && m.atkT < 0.8) || (m.K.move === 'archer' && m.mode === 'shoot' && m.shotT < 0.6));
+      if (windup && frame !== 3) { frame = 6; ctx.translate(Math.sin(m.t * 60) * m.r * 0.04, 0); }
       const img = imgs[frame] || imgs[0];
-      const size = m.r * meta.sizePerRadius;
+      const size = m.r * meta.sizePerRadius * (m.pop || 1);
       const x = m.sx - size / 2, y = m.sy - size / 2 + size * meta.centerOffsetY;
       // 달리는 병사는 좌우로 기우뚱
       if (m.K.move === 'run' || (m.K.move === 'archer' && m.mode !== 'shoot')) {
@@ -1352,8 +1382,8 @@ function drawMonster(m) {
   }
   ctx.restore();
 
-  // 궁수 조준 경고
-  if (m.K.move === 'archer' && m.mode === 'shoot' && m.shotT < 0.6) {
+  // 궁수 조준 / 보스 공격 직전 경고
+  if ((m.K.move === 'archer' && m.mode === 'shoot' && m.shotT < 0.6) || (m.boss && m.mode === 'fight' && m.atkT < 0.8)) {
     ctx.save(); ctx.fillStyle = '#ff4d4d'; ctx.font = `${Math.round(m.r * 0.9)}px Jua, sans-serif`;
     ctx.textAlign = 'center'; ctx.globalAlpha = 0.5 + 0.5 * Math.sin(m.t * 20);
     ctx.fillText('!', m.sx, m.sy - m.r * 1.3); ctx.restore();
@@ -1408,7 +1438,7 @@ function drawFx(dt) {
     if (f.gentle) f.vx *= 0.99;
     f.rot += f.vr * dt; f.life -= dt * (f.gentle ? 0.5 : 1.6);
     ctx.globalAlpha = clamp(f.life, 0, 1);
-    ctx.fillStyle = `hsl(${f.hue},95%,65%)`;
+    ctx.fillStyle = f.smoke ? `hsla(${f.hue},15%,${f.hue ? 62 : 85}%,${0.55 * clamp(f.life * 2, 0, 1)})` : `hsl(${f.hue},95%,65%)`;
     if (f.rect) {
       ctx.save(); ctx.translate(f.x, f.y); ctx.rotate(f.rot);
       ctx.fillRect(-f.size / 2, -f.size / 4, f.size, f.size / 2); ctx.restore();

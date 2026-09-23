@@ -937,6 +937,7 @@ FRAMES = {
     "3": dict(sx=0.95, sz=1.06, hurt=True, tilt=0.12),   # 맞음: X 눈 + 움찔
     "4": dict(sx=1.0, sz=0.98, step=1, tilt=0.07),       # 달리기 A (왼발 들기)
     "5": dict(sx=1.0, sz=0.98, step=-1, tilt=-0.07),     # 달리기 B (오른발 들기)
+    "6": dict(sx=1.05, sz=1.05, windup=True),            # 공격 준비: 입 크게 + 팔 번쩍
 }
 
 
@@ -974,6 +975,7 @@ for name in names:
 
     ex = EXTRA.get(name, {"hurt_hide": [], "hurt_show": []})
     lb = limbs(info["root"])
+    mouths = [(o, o.scale.copy()) for o in info["root"].children_recursive if "_mouth" in o.name or "_tongue" in o.name]
     for fid, f in FRAMES.items():
         info["root"].scale = (f["sx"], f["sx"], f["sz"])
         info["root"].rotation_euler = (0, f.get("tilt", 0), 0)
@@ -995,6 +997,14 @@ for name in names:
                 else:                          # 팔은 발과 반대로 흔듦
                     o.location.z += -0.06 if up else 0.08
                     o.location.y += 0.06 if up else -0.08
+        wind = f.get("windup", False)
+        for o, sc in mouths:
+            o.scale = (sc.x * 1.5, sc.y, sc.z * 2.2) if wind else sc
+        if wind:
+            for o, part, side, loc in lb:
+                if part != "_foot":
+                    o.location.z = loc.z + 0.4
+                    o.location.x = loc.x * 1.15
         scene.render.filepath = os.path.join(OUT, f"{name}_{fid}.png")
         bpy.ops.render.render(write_still=True)
         print(f"[ok] {name}_{fid}.png")
@@ -1002,6 +1012,8 @@ for name in names:
     info["root"].rotation_euler = (0, 0, 0)
     for o, part, side, loc in lb:
         o.location = loc
+    for o, sc in mouths:
+        o.scale = sc
 
 with open(os.path.join(OUT, "manifest.json"), "w", encoding="utf-8") as fp:
     json.dump(manifest, fp, indent=2)
