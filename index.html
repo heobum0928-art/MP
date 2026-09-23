@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="theme-color" content="#0b0f1e" />
+<title>모션 몬스터 헌터</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Jua&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --accent: #6ee7ff;
+    --mint: #8affc1;
+    --gold: #ffd166;
+    --pink: #ff6b9a;
+    --bg: #070a14;
+    --panel: rgba(12, 18, 36, .86);
+    --line: rgba(255, 255, 255, .12);
+    --font: "Jua", "Malgun Gothic", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: var(--bg); color: #fff; overflow: hidden;
+    font-family: var(--font);
+    touch-action: none; user-select: none; -webkit-user-select: none;
+  }
+  #stage { position: fixed; inset: 0; }
+  video { position: absolute; left: 0; top: 0; width: 2px; height: 2px; opacity: .01; pointer-events: none; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .hidden { display: none !important; }
+
+  button { font-family: var(--font); }
+  .btn {
+    appearance: none; border: 0; border-radius: 999px; cursor: pointer;
+    padding: 14px 34px; font-size: 21px; color: #04121a;
+    background: linear-gradient(135deg, var(--accent), var(--mint));
+    box-shadow: 0 8px 28px rgba(110, 231, 255, .32);
+    transition: transform .1s ease;
+  }
+  .btn:active { transform: scale(.96); }
+  .btn.gold { background: linear-gradient(135deg, #ffe08a, #ffb347); box-shadow: 0 8px 28px rgba(255, 190, 80, .35); }
+  .btn.ghost {
+    background: rgba(255, 255, 255, .06); color: #cfd8ea; border: 1px solid var(--line);
+    padding: 10px 18px; font-size: 15px; box-shadow: none;
+  }
+  .btn.ghost.on { color: #04121a; background: var(--mint); border-color: var(--mint); }
+  .btn:disabled { opacity: .45; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; align-items: center; }
+
+  /* ── 공용 오버레이 ── */
+  .overlay {
+    position: absolute; inset: 0; z-index: 10; overflow-y: auto;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 14px; padding: max(20px, env(safe-area-inset-top)) 20px max(20px, env(safe-area-inset-bottom));
+    background: radial-gradient(ellipse at 50% 30%, rgba(30, 40, 80, .92), rgba(5, 7, 14, .97));
+    text-align: center;
+  }
+  .logo { font-size: clamp(34px, 7vw, 60px); line-height: 1.05; letter-spacing: -.01em; text-shadow: 0 6px 30px rgba(110, 231, 255, .35); }
+  .logo small { display: block; font-size: .38em; color: var(--gold); margin-top: 6px; letter-spacing: .08em; }
+  .sub { margin: 0; font-size: clamp(14px, 2.6vw, 17px); line-height: 1.6; color: #b8c2d9; max-width: 44ch; }
+  .err { color: #ff8fa3; font-size: 14px; max-width: 44ch; line-height: 1.6; }
+  #loadState { font-size: 14px; color: #8fa0c0; min-height: 1.3em; }
+  .mascots { display: flex; gap: 4px; justify-content: center; height: clamp(56px, 11vw, 96px); }
+  .mascots img { height: 100%; animation: bob 1.6s ease-in-out infinite; }
+  .mascots img:nth-child(2n) { animation-delay: .3s; }
+  .mascots img:nth-child(3n) { animation-delay: .6s; }
+  @keyframes bob { 50% { transform: translateY(-8px); } }
+
+  /* ── 스테이지 지도 ── */
+  #map { justify-content: flex-start; }
+  #map h2 { margin: 6px 0 0; font-size: 28px; font-weight: normal; }
+  .worlds { width: min(100%, 860px); display: grid; gap: 10px; }
+  .world {
+    display: grid; grid-template-columns: 120px 1fr; gap: 10px; align-items: center;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 10px 12px;
+  }
+  .world .wname { font-size: 18px; text-align: left; line-height: 1.2; }
+  .world .wname span { display: block; font-size: 30px; }
+  .world .stages { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .stageBtn {
+    appearance: none; border: 1px solid var(--line); border-radius: 14px; cursor: pointer;
+    background: rgba(255, 255, 255, .06); color: #fff; padding: 8px 6px; min-height: 64px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  }
+  .stageBtn b { font-size: 18px; font-weight: normal; }
+  .stageBtn i { font-style: normal; font-size: 12px; color: #aab6d0; }
+  .stageBtn .stars { font-size: 14px; color: var(--gold); letter-spacing: 1px; }
+  .stageBtn.boss { border-color: rgba(255, 107, 154, .55); }
+  .stageBtn.next { border-color: var(--mint); box-shadow: 0 0 0 2px rgba(138, 255, 193, .35) inset; }
+  .stageBtn:disabled { opacity: .35; cursor: default; }
+  @media (max-width: 560px) { .world { grid-template-columns: 1fr; } .world .wname { text-align: center; } }
+
+  /* ── HUD ── */
+  #hud {
+    position: absolute; top: 0; left: 0; right: 0; z-index: 5; pointer-events: none;
+    padding: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left));
+    display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+  }
+  #hud .left, #hud .right { display: flex; flex-direction: column; gap: 6px; }
+  #hud .right { align-items: flex-end; }
+  #hearts { font-size: clamp(20px, 3.6vw, 30px); letter-spacing: 1px; filter: drop-shadow(0 2px 4px rgba(0, 0, 0, .6)); }
+  #stageLabel { font-size: clamp(15px, 3vmin, 24px); color: #dfe7f5; text-shadow: 0 2px 6px #000; }
+  #score { font-size: clamp(22px, 4vw, 34px); color: var(--gold); text-shadow: 0 3px 10px rgba(0, 0, 0, .8); font-variant-numeric: tabular-nums; }
+  #missions { display: flex; flex-direction: column; gap: 4px; }
+  .mission {
+    display: flex; align-items: center; gap: 6px; font-size: clamp(16px, 3.4vmin, 26px);
+    background: rgba(8, 12, 26, .62); border: 1px solid var(--line); border-radius: 12px; padding: 3px 10px 3px 4px;
+  }
+  .mission img { width: 30px; height: 30px; object-fit: contain; }
+  .mission .ic { width: 30px; text-align: center; font-size: 20px; }
+  .mission.done { border-color: var(--mint); color: var(--mint); }
+  #handState { font-size: clamp(13px, 2.8vmin, 20px); }
+  #handState.on { color: var(--mint); }
+  #handState.off { color: #ff9fb3; }
+  #combo {
+    font-size: clamp(22px, 4.4vw, 40px); color: #fff; text-shadow: 0 0 18px rgba(255, 180, 60, .9), 0 3px 8px #000;
+    transition: transform .08s ease;
+  }
+  #combo.pop { transform: scale(1.25); }
+  #fever { font-size: 20px; background: linear-gradient(90deg, #ff6b9a, #ffd166, #8affc1, #6ee7ff); padding: 2px 12px; border-radius: 999px; color: #1a1030; }
+
+  #bossBar {
+    position: absolute; left: 50%; top: max(10px, env(safe-area-inset-top)); transform: translateX(-50%);
+    width: min(44vw, 420px); z-index: 6; pointer-events: none; text-align: center;
+  }
+  #bossBar .name { font-size: 18px; color: #ffb3c6; text-shadow: 0 2px 8px #000; }
+  #bossBar .track { height: 14px; border-radius: 999px; background: rgba(0, 0, 0, .55); border: 1px solid rgba(255, 255, 255, .25); overflow: hidden; }
+  #bossFill { height: 100%; width: 100%; background: linear-gradient(90deg, #ff3d6e, #ff9f43); transition: width .15s ease; }
+
+  .corner {
+    position: absolute; z-index: 7; bottom: max(10px, env(safe-area-inset-bottom));
+    font-size: 13px; padding: 8px 14px; border-radius: 999px;
+    background: rgba(12, 18, 32, .72); color: #9fb0cc; border: 1px solid #263148; cursor: pointer;
+  }
+  #pauseBtn { right: max(10px, env(safe-area-inset-right)); font-size: 18px; padding: 6px 14px; }
+  #dbgBtn { right: calc(max(10px, env(safe-area-inset-right)) + 64px); }
+
+  /* ── 배너 (인트로/클리어/실패/일시정지) ── */
+  #banner {
+    position: absolute; inset: 0; z-index: 8; display: flex; align-items: center; justify-content: center;
+    background: rgba(4, 6, 14, .45); pointer-events: auto;
+  }
+  #banner .card {
+    width: min(92vw, 620px); max-height: 92vh; overflow-y: auto;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 26px;
+    padding: 20px 22px; text-align: center; box-shadow: 0 20px 60px rgba(0, 0, 0, .55);
+    animation: pop .35s cubic-bezier(.2, 1.4, .4, 1);
+  }
+  @keyframes pop { from { transform: scale(.7); opacity: 0; } }
+  #banner .kicker { font-size: 16px; color: var(--accent); }
+  #banner .title { font-size: clamp(28px, 6vw, 46px); margin: 4px 0 8px; line-height: 1.15; }
+  #banner .stars { font-size: clamp(36px, 7vw, 56px); letter-spacing: 6px; color: var(--gold); text-shadow: 0 0 18px rgba(255, 209, 102, .6); }
+  #banner .stars .off { color: rgba(255, 255, 255, .18); text-shadow: none; }
+  #banner .body { font-size: 18px; color: #d5ddef; line-height: 1.6; }
+  #banner .mlist { display: flex; flex-direction: column; gap: 6px; align-items: center; margin: 8px 0; }
+  #banner .mlist .mission { font-size: 20px; padding: 4px 14px 4px 6px; }
+  #banner .mlist .mission img { width: 40px; height: 40px; }
+  #banner .gesture { margin-top: 12px; font-size: 16px; color: #b8c2d9; }
+  #banner .gbar { height: 10px; border-radius: 999px; background: rgba(255, 255, 255, .12); overflow: hidden; margin: 6px auto 0; width: 70%; }
+  #banner .gfill { height: 100%; width: 0; background: linear-gradient(90deg, var(--mint), var(--gold)); }
+  #banner .row { margin-top: 14px; }
+
+  /* ── 화면 전환 (원형으로 닫혔다 열림) ── */
+  #trans {
+    position: absolute; inset: 0; z-index: 40; pointer-events: none;
+    display: flex; align-items: center; justify-content: center; text-align: center;
+    background: radial-gradient(circle at 50% 45%, var(--tc1, #2a3a7a), var(--tc2, #080b18) 70%);
+    clip-path: circle(0% at 50% 50%);
+    transition: clip-path .5s cubic-bezier(.7, 0, .3, 1);
+  }
+  #trans.cover { clip-path: circle(75% at 50% 50%); pointer-events: auto; }
+  #trans .tcard { opacity: 0; transform: scale(.8); transition: opacity .25s ease, transform .35s cubic-bezier(.2, 1.5, .4, 1); }
+  #trans.show .tcard { opacity: 1; transform: none; }
+  #trans .temoji { font-size: clamp(60px, 14vw, 120px); line-height: 1; filter: drop-shadow(0 8px 20px rgba(0,0,0,.5)); }
+  #trans .tkicker { font-size: clamp(16px, 3vw, 22px); color: var(--gold); margin-top: 10px; letter-spacing: .1em; }
+  #trans .ttitle { font-size: clamp(34px, 7vw, 64px); margin-top: 4px; text-shadow: 0 6px 24px rgba(0,0,0,.5); }
+  #trans .tmobs { display: flex; gap: 6px; justify-content: center; margin-top: 12px; height: clamp(44px, 9vw, 80px); }
+  #trans .tmobs img { height: 100%; animation: bob 1.2s ease-in-out infinite; }
+  #trans .tmobs img:nth-child(2n) { animation-delay: .25s; }
+
+  #players { display: flex; gap: 6px; }
+  #players span { font-size: 15px; padding: 2px 8px; border-radius: 999px; background: rgba(8,12,26,.62); border: 1px solid currentColor; }
+  #banner .pres { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 10px; }
+  #banner .pres div { padding: 6px 14px; border-radius: 16px; border: 2px solid currentColor; background: rgba(255,255,255,.05); font-size: 20px; }
+
+  #rotateHint {
+    position: absolute; inset: 0; z-index: 30; display: none;
+    flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+    background: rgba(3, 4, 8, .95); text-align: center; font-size: 22px; color: #dfe7f5;
+  }
+  #rotateHint .icon { font-size: 60px; animation: tilt 1.6s ease-in-out infinite; }
+  @keyframes tilt { 0%, 30% { transform: rotate(0deg); } 60%, 100% { transform: rotate(-90deg); } }
+  @media (orientation: portrait) { body.playing #rotateHint { display: flex; } }
+</style>
+</head>
+<body>
+<div id="stage">
+  <video id="cam" playsinline muted autoplay></video>
+  <canvas id="game"></canvas>
+
+  <!-- 게임 HUD -->
+  <div id="hud" class="hidden">
+    <div class="left">
+      <div id="hearts"></div>
+      <div id="stageLabel"></div>
+      <div id="missions"></div>
+      <div id="handState"></div>
+    </div>
+    <div class="right">
+      <div id="score">0</div>
+      <div id="combo"></div>
+      <div id="fever" class="hidden">피버 타임!</div>
+      <div id="players" class="hidden"></div>
+    </div>
+  </div>
+  <div id="bossBar" class="hidden">
+    <div class="name" id="bossName"></div>
+    <div class="track"><div id="bossFill"></div></div>
+  </div>
+  <button id="pauseBtn" class="corner hidden" aria-label="일시정지">⏸</button>
+  <button id="dbgBtn" class="corner hidden">DEBUG</button>
+
+  <!-- 인트로/클리어/실패/일시정지 카드 -->
+  <div id="banner" class="hidden">
+    <div class="card">
+      <div class="kicker" id="bKicker"></div>
+      <div class="title" id="bTitle"></div>
+      <div class="stars" id="bStars"></div>
+      <div class="body" id="bBody"></div>
+      <div class="mlist" id="bMissions"></div>
+      <div class="gesture" id="bGesture">
+        <span id="bGestureText"></span>
+        <div class="gbar"><div class="gfill" id="bGestureFill"></div></div>
+      </div>
+      <div class="row" id="bButtons"></div>
+    </div>
+  </div>
+
+  <!-- 타이틀 -->
+  <div id="menu" class="overlay">
+    <div class="mascots" id="mascots"></div>
+    <div class="logo">모션 몬스터 헌터<small>⚔️ 팔을 휘둘러 몬스터를 물리쳐라! ⚔️</small></div>
+    <p class="sub">폰을 <b>가로로</b> 세워 두고 2~3m 뒤로 물러나, 카메라에 상체가 다 나오게 서세요. (TV 미러링 추천)</p>
+    <div class="row">
+      <button class="btn ghost modeBtn on" data-mode="pose">🧍 멀리서 (몸 인식 · 3명까지)</button>
+      <button class="btn ghost modeBtn" data-mode="hand">✋ 가까이서 (손 인식)</button>
+    </div>
+    <div class="row">
+      <button id="playBtn" class="btn gold">▶ 모험 시작</button>
+      <button id="mapBtn" class="btn">🗺 스테이지 선택</button>
+    </div>
+    <div id="loadState"></div>
+    <div id="startErr" class="err"></div>
+    <div class="row">
+      <button id="musicBtn" class="btn ghost on">🎵 음악</button>
+      <button id="voiceBtn" class="btn ghost on">🗣 음성 안내</button>
+      <button id="noCamBtn" class="btn ghost">🖱 카메라 없이 (터치/마우스)</button>
+    </div>
+  </div>
+
+  <!-- 스테이지 선택 -->
+  <div id="map" class="overlay hidden">
+    <h2>🗺 모험 지도</h2>
+    <div class="worlds" id="worlds"></div>
+    <div class="row"><button id="mapBack" class="btn ghost">← 처음으로</button></div>
+  </div>
+
+  <div id="trans"><div class="tcard">
+    <div class="temoji" id="tEmoji"></div>
+    <div class="tkicker" id="tKicker"></div>
+    <div class="ttitle" id="tTitle"></div>
+    <div class="tmobs" id="tMobs"></div>
+  </div></div>
+
+  <div id="rotateHint"><div class="icon">📱</div><div>폰을 <b>가로로</b> 돌려주세요</div></div>
+</div>
+
+<script type="module" src="js/game.js"></script>
+</body>
+</html>

@@ -1,0 +1,108 @@
+{
+  "frames": [
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5"
+  ],
+  "monsters": {
+    "slime": {
+      "sizePerRadius": 3.0,
+      "centerOffsetY": 0.0
+    },
+    "bat": {
+      "sizePerRadius": 4.186,
+      "centerOffsetY": 0.0278
+    },
+    "horn": {
+      "sizePerRadius": 3.1,
+      "centerOffsetY": 0.0161
+    },
+    "boss": {
+      "sizePerRadius": 3.5,
+      "centerOffsetY": 0.0286
+    },
+    "ghost": {
+      "sizePerRadius": 3.2632,
+      "centerOffsetY": 0.0
+    },
+    "mushroom": {
+      "sizePerRadius": 3.0,
+      "centerOffsetY": 0.0
+    },
+    "bee": {
+      "sizePerRadius": 3.6585,
+      "centerOffsetY": 0.0333
+    },
+    "golem": {
+      "sizePerRadius": 3.3,
+      "centerOffsetY": 0.0
+    },
+    "bomb": {
+      "sizePerRadius": 3.3333,
+      "centerOffsetY": 0.05
+    },
+    "imp": {
+      "sizePerRadius": 3.6471,
+      "centerOffsetY": 0.0645
+    },
+    "snowman": {
+      "sizePerRadius": 3.5789,
+      "centerOffsetY": 0.0735
+    },
+    "heart": {
+      "sizePerRadius": 3.0588,
+      "centerOffsetY": 0.0
+    },
+    "star": {
+      "sizePerRadius": 3.2941,
+      "centerOffsetY": 0.0
+    },
+    "kingslime": {
+      "sizePerRadius": 3.1,
+      "centerOffsetY": 0.0484
+    },
+    "ghostking": {
+      "sizePerRadius": 3.4737,
+      "centerOffsetY": 0.0303
+    },
+    "yeti": {
+      "sizePerRadius": 3.5,
+      "centerOffsetY": 0.0143
+    },
+    "goblin": {
+      "sizePerRadius": 4.0,
+      "centerOffsetY": 0.0
+    },
+    "archer": {
+      "sizePerRadius": 4.0,
+      "centerOffsetY": 0.0
+    },
+    "shield": {
+      "sizePerRadius": 4.0,
+      "centerOffsetY": 0.0
+    },
+    "skeleton": {
+      "sizePerRadius": 4.25,
+      "centerOffsetY": 0.0
+    },
+    "goblinchief": {
+      "sizePerRadius": 4.1176,
+      "centerOffsetY": 0.0
+    },
+    "dragon": {
+      "sizePerRadius": 4.7778,
+      "centerOffsetY": 0.0116
+    },
+    "knight": {
+      "sizePerRadius": 4.2683,
+      "centerOffsetY": 0.0143
+    },
+    "darkknight": {
+      "sizePerRadius": 4.2683,
+      "centerOffsetY": 0.0143
+    }
+  }
+}
