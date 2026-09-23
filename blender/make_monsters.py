@@ -438,7 +438,7 @@ def build_heart():
     eye("heart_eyeL", -0.24, 0.12, 0.15, -0.64, R, lids)
     eye("heart_eyeR", 0.24, 0.12, 0.15, -0.64, R, lids)
     torus("heart_smile", (0, -0.62, -0.16), (math.pi / 2, 0, 0), 0.1, 0.028, M_MOUTH, R)
-    MONSTERS["heart"] = dict(root=R, lids=lids, body_r=0.85, ortho=2.6, z_off=0.0)
+    MONSTERS["heart"] = dict(root=R, lids=lids, body_r=0.85, ortho=3.4, z_off=0.0)
 
 
 def build_star():
@@ -784,6 +784,85 @@ for fn in (build_slime, build_bat, build_horn, build_boss, build_ghost, build_mu
            build_goblin, build_archer, build_shield, build_skeleton, build_goblin_chief, build_dragon,
            lambda: build_knight("knight"), lambda: build_knight("darkknight", dark=True)):
     fn()
+
+
+# ─────────────── 꾸미기 (개성 소품 추가) ───────────────
+def deco(name):
+    return MONSTERS[name]["root"]
+
+
+def decorate():
+    # 바위골렘: 빛나는 룬 금 + 머리 위 꽃
+    R = deco("golem")
+    rune = mat("rune", "#57e4ff", emit=4.0)
+    for i, (x, z, rot) in enumerate([(-0.45, 0.3, 0.5), (0.5, -0.2, -0.6), (0.1, -0.5, 1.2)]):
+        bpy.ops.mesh.primitive_cube_add(size=1, location=(x, -0.86, z), rotation=(0, rot, 0))
+        c = bpy.context.active_object; c.name = f"golem_rune{i}"; c.scale = (0.28, 0.03, 0.04)
+        c.data.materials.append(rune); c.parent = R
+    petal = mat("petal", "#ff8fb8", rough=0.5)
+    for i in range(5):
+        a = i / 5 * math.tau
+        sphere(f"golem_petal{i}", (0.1 + math.cos(a) * 0.1, -0.05, 1.02 + math.sin(a) * 0.1), (0.08, 0.04, 0.08), petal, R, seg=16)
+    sphere("golem_flowerc", (0.1, -0.08, 1.02), (0.06, 0.04, 0.06), mat("flowerc", "#ffd23d"), R, seg=16)
+    cyl("golem_stem", (0.1, -0.02, 0.9), (0, 0, 0), 0.02, 0.2, mat("stem", "#3c9a48"), R, verts=8)
+
+    # 박쥐: 귀 안쪽 분홍 + 앞머리 털 + 작은 발
+    R = deco("bat")
+    for s_ in (-1, 1):
+        cone(f"bat_earIn{s_}", (s_ * 0.44, -0.04, 0.82), (0, s_ * 0.35, 0), 0.11, 0.3, M_TONGUE, R)
+        sphere(f"bat_foot{s_}", (s_ * 0.22, -0.2, -0.86), (0.12, 0.14, 0.08), mat(f"batf{s_}", "#4b2a9e"), R, seg=16)
+        sphere(f"bat_blush{s_}", (s_ * 0.5, -0.64, -0.12), (0.12, 0.04, 0.07), M_BLUSH, R, seg=16)
+    for i in range(3):
+        cone(f"bat_tuft{i}", ((i - 1) * 0.12, -0.1, 0.9), (0, (i - 1) * 0.5, 0), 0.08, 0.26, mat(f"batt{i}", "#8a5cff"), R)
+
+    # 눈사람: 모자 대신 털모자 + 벙어리장갑 + 볼터치
+    R = deco("snowman")
+    for o in list(R.children):
+        if o.type == 'MESH' and o.name.startswith("Cylinder"):
+            o.hide_render = True; o.hide_set(True); bpy.data.objects.remove(o, do_unlink=True)
+    knit = mat("knit", "#3d8bff", rough=0.8)
+    sphere("sm_beanie", (0, 0.02, 0.86), (0.6, 0.56, 0.38), knit, R)
+    torus("sm_beanieRim", (0, 0.02, 0.74), (0, 0, 0), 0.55, 0.09, mat("knit2", "#ffffff", rough=0.8), R)
+    sphere("sm_pompom", (0, 0.02, 1.25), (0.16,) * 3, mat("pom", "#ff5a7a", rough=0.9), R, seg=24)
+    for s_ in (-1, 1):
+        sphere(f"sm_mitten{s_}", (s_ * 1.28, 0, 0.15), (0.14, 0.12, 0.16), mat(f"mit{s_}", "#e8394d", rough=0.8), R, seg=24)
+        sphere(f"sm_blush{s_}", (s_ * 0.36, -0.56, 0.44), (0.1, 0.04, 0.06), M_BLUSH, R, seg=16)
+
+    # 하트: 천사 날개 + 후광
+    R = deco("heart")
+    wingm = mat("angelwing", "#ffffff", rough=0.4, emit=0.3)
+    for s_ in (-1, 1):
+        for j in range(3):
+            w = sphere(f"heart_wing{s_}_{j}", (s_ * (1.0 + j * 0.12), 0.1, 0.35 - j * 0.16), (0.36 - j * 0.07, 0.05, 0.16), wingm, R, seg=24)
+            w.rotation_euler = (0, s_ * (-0.3 - j * 0.15), 0)
+    torus("heart_halo", (0, 0.05, 0.95), (0.25, 0, 0), 0.34, 0.05, mat("halo", "#ffd23d", emit=2.0), R)
+
+    # 별: 반짝이 + 볼터치
+    R = deco("star")
+    sp = mat("sparkle", "#ffffff", emit=5.0)
+    for i, (x, z) in enumerate([(-0.95, 0.75), (0.95, 0.55), (0.75, -0.9)]):
+        for rot in (0, math.pi / 2):
+            bpy.ops.mesh.primitive_cube_add(size=1, location=(x, -0.3, z), rotation=(0, rot + math.pi / 4, 0))
+            c = bpy.context.active_object; c.name = f"star_sparkle{i}"; c.scale = (0.2, 0.02, 0.04)
+            c.data.materials.append(sp); c.parent = R
+    for s_ in (-1, 1):
+        sphere(f"star_blush{s_}", (s_ * 0.3, -0.38, -0.05), (0.08, 0.03, 0.05), M_BLUSH, R, seg=16)
+
+    # 버섯: 머리 위 새싹
+    R = deco("mushroom")
+    leaf = mat("leaf", "#5dd35a", rough=0.5)
+    cyl("mush_sprout", (0, 0, 1.0), (0, 0, 0), 0.025, 0.2, leaf, R, verts=8)
+    for s_ in (-1, 1):
+        sphere(f"mush_leaf{s_}", (s_ * 0.13, 0, 1.12), (0.14, 0.04, 0.07), leaf, R, seg=16).rotation_euler = (0, s_ * -0.4, 0)
+
+    # 유령: 작은 등불
+    R = deco("ghost")
+    cyl("ghost_handle", (0.95, -0.2, 0.05), (0, 0, 0), 0.02, 0.3, mat("lanh", "#6b4526"), R, verts=8)
+    sphere("ghost_lantern", (0.95, -0.2, -0.2), (0.16, 0.16, 0.2), mat("lanlight", "#ffd166", emit=4.0), R, seg=24)
+    torus("ghost_lanrim", (0.95, -0.2, -0.04), (0, 0, 0), 0.12, 0.03, M_GOLD, R)
+
+
+decorate()
 
 # ─────────────── 조명 / 카메라 ───────────────
 def light(name, kind, energy, loc, rot, size=None, color=(1, 1, 1)):
