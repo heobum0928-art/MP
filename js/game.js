@@ -1407,14 +1407,104 @@ function drawCam() {
 
 // 월드별 길: 불투명한 바닥 + 발밑으로 흘러오는 타일 → 앞으로 달리는 느낌
 const GROUND = {
-  forest:  { road: ['#b8895a', '#a97b4c'], side: ['#4fa046', '#46913e'], edge: '#7a5a36', lines: 'rgba(90,60,30,.35)' },
+  forest:  { road: ['#c49a62', '#bb9159'], side: ['#4fa046', '#48963f'], edge: '#6f9e3a', lines: 'rgba(90,60,30,.35)' },
   fort:    { road: ['#a06c38', '#8d5d2e'], side: ['#6e913b', '#628435'], edge: '#5b3a1e', lines: 'rgba(40,20,5,.55)', planks: true },
   castle:  { road: ['#716a86', '#625c77'], side: ['#2e2940', '#28233a'], edge: '#9a93b3', lines: 'rgba(20,15,35,.5)', tiles: true },
-  snow:    { road: ['#e6eefa', '#d6e2f3'], side: ['#f7fbff', '#eef4fc'], edge: '#9fbde0', lines: 'rgba(120,150,190,.3)' },
+  snow:    { road: ['#cfe6fb', '#c6e0f8'], side: ['#f7fbff', '#f1f6fd'], edge: '#ffffff', lines: 'rgba(120,150,190,.3)' },
   volcano: { road: ['#3d2c2b', '#352524'], side: ['#1f1515', '#261919'], edge: '#ff6a2a', lines: 'rgba(255,110,40,.35)', lava: true },
   lair:    { road: ['#3c2549', '#331f40'], side: ['#1d1227', '#231630'], edge: '#d27bff', lines: 'rgba(210,123,255,.3)', lava: true },
 };
 const ROAD_W = 0.62, GROUND_Y = 0.34, BAND = 0.09;
+
+// 월드별 바닥 장식 (띠마다 고정된 난수로 배치 → 길과 함께 흘러옴)
+function groundDeco(sc, band, zc, bh) {
+  if (zc < -0.15 || bh < 1.5) return;
+  const rr = (k) => { const v = Math.sin(band * 127.1 + k * 311.7) * 43758.5; return v - Math.floor(v); };
+  const at = (wx) => toScreen(wx, GROUND_Y, zc);
+  const P = project(zc), u = baseR() * P;   // 이 거리의 크기 단위
+  const t = performance.now() / 1000;
+  switch (sc) {
+    case 'forest': {
+      // 길 위 조약돌 + 길옆 풀·꽃
+      for (let i = 0; i < 2; i++) {
+        const q = at((rr(i) * 2 - 1) * ROAD_W * 0.85);
+        ctx.fillStyle = rr(i + 5) > 0.5 ? '#9c8b78' : '#b3a390';
+        ctx.beginPath(); ctx.ellipse(q.x, q.y, u * 0.09, u * 0.04, 0, 0, Math.PI * 2); ctx.fill();
+      }
+      for (const side of [-1, 1]) {
+        const q = at(side * (ROAD_W + 0.12 + rr(side + 9) * 0.5));
+        ctx.fillStyle = '#2f7a30';
+        for (let k = -1; k <= 1; k++) {
+          ctx.beginPath(); ctx.moveTo(q.x + k * u * 0.05, q.y); ctx.lineTo(q.x + k * u * 0.09, q.y - u * 0.18); ctx.lineTo(q.x + k * u * 0.05 + u * 0.03, q.y); ctx.fill();
+        }
+        if (rr(side + 3) > 0.55) {
+          ctx.fillStyle = ['#ff7eb6', '#ffd23d', '#ffffff', '#b58cff'][Math.floor(rr(side + 4) * 4)];
+          ctx.beginPath(); ctx.arc(q.x + u * 0.12, q.y - u * 0.08, u * 0.045, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+      break;
+    }
+    case 'fort': {
+      // 판자 못
+      ctx.fillStyle = 'rgba(40,30,20,.6)';
+      for (const wx of [-ROAD_W * 0.85, ROAD_W * 0.85]) { const q = at(wx); ctx.beginPath(); ctx.arc(q.x, q.y, Math.max(1, u * 0.025), 0, Math.PI * 2); ctx.fill(); }
+      break;
+    }
+    case 'castle': {
+      // 가운데 붉은 융단 + 금테
+      const a = toScreen(-0.22, GROUND_Y, zc + BAND / 2), b = toScreen(0.22, GROUND_Y, zc + BAND / 2);
+      const c = toScreen(-0.22, GROUND_Y, zc - BAND / 2), d = toScreen(0.22, GROUND_Y, zc - BAND / 2);
+      ctx.fillStyle = band % 2 ? '#a3243a' : '#b12a42';
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.lineTo(d.x, d.y); ctx.lineTo(c.x, c.y); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = '#e8b84a'; ctx.lineWidth = Math.max(1, u * 0.03);
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(c.x, c.y); ctx.moveTo(b.x, b.y); ctx.lineTo(d.x, d.y); ctx.stroke();
+      break;
+    }
+    case 'snow': {
+      // 발자국 + 얼음 반짝임
+      if (band % 2 === 0) {
+        for (const s_ of [-1, 1]) {
+          const q = at(s_ * 0.08 + (rr(1) - 0.5) * 0.1);
+          ctx.fillStyle = 'rgba(120,160,210,.55)';
+          ctx.beginPath(); ctx.ellipse(q.x, q.y + (s_ > 0 ? bh * 0.3 : 0), u * 0.04, u * 0.022, 0, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+      if (rr(7) > 0.6) {
+        const q = at((rr(8) * 2 - 1) * ROAD_W);
+        const tw = 0.5 + 0.5 * Math.sin(t * 6 + band);
+        ctx.fillStyle = `rgba(255,255,255,${0.9 * tw})`;
+        ctx.fillRect(q.x - u * 0.05, q.y - 1, u * 0.1, 2); ctx.fillRect(q.x - 1, q.y - u * 0.05, 2, u * 0.1);
+      }
+      break;
+    }
+    case 'volcano': {
+      // 빛나는 용암 금
+      const q = at((rr(2) * 2 - 1) * ROAD_W * 0.8);
+      ctx.strokeStyle = `rgba(255,${120 + 60 * Math.sin(t * 4 + band) | 0},40,.85)`; ctx.lineWidth = Math.max(1, u * 0.025);
+      ctx.beginPath(); ctx.moveTo(q.x - u * 0.2, q.y); ctx.lineTo(q.x - u * 0.05, q.y - bh * 0.3); ctx.lineTo(q.x + u * 0.08, q.y + bh * 0.2); ctx.lineTo(q.x + u * 0.22, q.y - bh * 0.1); ctx.stroke();
+      for (const side of [-1, 1]) if (rr(side + 11) > 0.6) {
+        const p2 = at(side * (ROAD_W + 0.25 + rr(side + 12) * 0.4));
+        ctx.fillStyle = `rgba(255,${90 + 50 * Math.sin(t * 3 + band) | 0},30,.8)`;
+        ctx.beginPath(); ctx.ellipse(p2.x, p2.y, u * 0.2, u * 0.05, 0, 0, Math.PI * 2); ctx.fill();
+      }
+      break;
+    }
+    case 'lair': {
+      // 빛나는 마법진 조각 + 작은 수정
+      if (band % 3 === 0) {
+        const q = at(0);
+        ctx.strokeStyle = `rgba(210,123,255,${0.5 + 0.3 * Math.sin(t * 3 + band)})`; ctx.lineWidth = Math.max(1, u * 0.02);
+        ctx.beginPath(); ctx.ellipse(q.x, q.y, u * 0.35, u * 0.08, 0, 0, Math.PI * 2); ctx.stroke();
+      }
+      for (const side of [-1, 1]) if (rr(side + 21) > 0.5) {
+        const p2 = at(side * (ROAD_W + 0.2 + rr(side + 22) * 0.4));
+        ctx.fillStyle = 'rgba(190,110,255,.85)';
+        ctx.beginPath(); ctx.moveTo(p2.x - u * 0.04, p2.y); ctx.lineTo(p2.x, p2.y - u * 0.2); ctx.lineTo(p2.x + u * 0.04, p2.y); ctx.fill();
+      }
+      break;
+    }
+  }
+}
 
 function drawGround() {
   const g = GROUND[WORLDS[S.world].scenery] || GROUND.forest;
@@ -1440,7 +1530,7 @@ function drawGround() {
     ctx.beginPath(); ctx.moveTo(L0, a.y); ctx.lineTo(R0, a.y); ctx.lineTo(R1, b.y); ctx.lineTo(L1, b.y); ctx.closePath(); ctx.fill();
     // 가로 줄눈 (판자·돌 타일)
     ctx.strokeStyle = g.lines; ctx.lineWidth = Math.max(1, (b.y - a.y) * 0.08);
-    ctx.beginPath(); ctx.moveTo(L0, a.y); ctx.lineTo(R0, a.y); ctx.stroke();
+    if (g.planks || g.tiles) { ctx.beginPath(); ctx.moveTo(L0, a.y); ctx.lineTo(R0, a.y); ctx.stroke(); }
     if (g.planks || g.tiles) {       // 세로 줄눈
       const n = g.planks ? 1 : 4;
       for (let i = 1; i < n + 1; i++) {
@@ -1457,6 +1547,7 @@ function drawGround() {
     if (g.lava && WORLDS[S.world].scenery === 'lair') ctx.fillStyle = `rgba(210,${even ? 123 : 90},255,${0.7 + 0.3 * Math.sin(performance.now() / 250 + z * 20)})`;
     ctx.beginPath(); ctx.moveTo(eL0, a.y); ctx.lineTo(L0, a.y); ctx.lineTo(L1, b.y); ctx.lineTo(eL1, b.y); ctx.closePath(); ctx.fill();
     ctx.beginPath(); ctx.moveTo(R0, a.y); ctx.lineTo(eR0, a.y); ctx.lineTo(eR1, b.y); ctx.lineTo(R1, b.y); ctx.closePath(); ctx.fill();
+    groundDeco(WORLDS[S.world].scenery, Math.floor((z + S.roadZ) / BAND + 1000), (z0 + z1) / 2, b.y - a.y);
   }
   ctx.restore();
   // 지평선 안개 (먼 곳이 부드럽게 사라짐)
