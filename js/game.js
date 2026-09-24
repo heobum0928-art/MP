@@ -568,6 +568,7 @@ function startStage(idx) {
     spawnT: 1.2, boss: null, nextBossAt: st.bossEvery || 0, bossCycle: 0, fever: 0, stageT: 0, clearDelay: 0,
     noBodyT: 0, bodyT: 0,
     players: [0, 1, 2].map(() => ({ score: 0, kills: 0 })), multi: false,
+    swarmT: 12, pace: 1, event: null, eventT: rand(28, 36),
     assist: Math.max(CFG.assistMin + 0.06, 1 - 0.1 * (S.failStreak[st.id] || 0)),
   });
   hudCache = ''; comboShown = -1; updateComboHud();
@@ -752,8 +753,28 @@ function updatePlay(dt) {
   if (S.fever > 0) { S.fever -= dt; if (S.fever <= 0) UI.fever.classList.add('hidden'); }
 
   const prog = st.endless ? clamp(S.stageT / 240, 0, 1) : missionProgress();
-  const interval = lerp(st.interval[0], st.interval[1], prog) * (S.boss ? 2.2 : 1) / S.assist;
-  const speed = lerp(st.speed[0], st.speed[1], prog) * S.assist;
+  // 스테이지가 뒤로 갈수록 빠르고 촘촘하게 (무한 모드는 시간에 따라)
+  const tier = st.endless ? 10 + S.stageT / 30 : S.stageIdx;
+  S.pace = 1.12 + tier * 0.028;
+  const interval = lerp(st.interval[0], st.interval[1], prog) * (S.boss ? 2.2 : 1) / S.assist / (1 + tier * 0.03);
+  const speed = lerp(st.speed[0], st.speed[1], prog) * S.assist * S.pace;
+
+  // 깜짝 이벤트
+  updateEvent(dt);
+  if (S.event && S.event.pauseSpawns) S.spawnT = Math.max(S.spawnT, 0.5);
+
+  // 몬스터 떼: 주기적으로 3~4마리가 한꺼번에
+  S.swarmT = (S.swarmT ?? 14) - dt;
+  if (S.swarmT <= 0 && !S.boss && !S.clearDelay) {
+    S.swarmT = rand(13, 18) - Math.min(5, tier * 0.3);
+    const n = tier > 8 ? 4 : 3;
+    for (let i = 0; i < n; i++) {
+      const k = pickWeighted(st.spawn);
+      if (KINDS[k].bomb) continue;
+      spawn(k, { wx: -0.4 + (0.8 * i) / (n - 1) + rand(-0.05, 0.05), z: 1.0 + i * 0.04 });
+    }
+    toast('⚡ 몬스터 떼다! ⚡', 1.3); SFX.roar();
+  }
 
   // 스폰
   S.spawnT -= dt;
@@ -840,6 +861,14 @@ function updateMonsters(dt, baseSpeed) {
       case 'float':
         spd = 0.12; m.wx += m.dir * dt * 0.16; m.oy = Math.sin(m.t * 2.4) * 0.03;
         break;
+      case 'arc':
+        spd = 0; m.wx += m.vx * dt; m.wy += m.vy * dt; m.vy += 1.1 * dt;
+        if (m.wy > 0.5 || Math.abs(m.wx) > 0.95) { m.dead = true; }
+        break;
+      case 'fall':
+        spd = 0; m.wx += m.vx * dt; m.wy += m.vy * dt;
+        if (m.wy > 0.45) { m.dead = true; }
+        break;
       case 'straight': {
         spd = (K.speed || 1.6) * 0.27 * slow * (0.5 + 0.5 * S.assist);
         const f = clamp(m.z / m.startZ, 0, 1);
@@ -851,6 +880,8 @@ function updateMonsters(dt, baseSpeed) {
     project1(m);
 
     if (K.move === 'float' && Math.abs(m.wx) > 0.75) { m.dead = true; continue; }
+    if (K.gold && m.t > 7) { m.dead = true; poof(m); continue; }         // 7초 지나면 도망
+    if (K.treasure) continue;
     if (m.z <= 0) reach(m);
   }
   S.monsters = S.monsters.filter(m => !m.dead);
@@ -873,7 +904,7 @@ function project1(m) {
   if (!m.puffed) { m.puffed = true; entryPuff(m); }
 }
 function entryPuff(m) {
-  if (m.K.proj) return;
+  if (m.K.proj || m.K.treasure) return;
   const ground = m.entry === 'ground';
   const baseY = ground ? m.sy + m.r : m.sy;
   for (let i = 0; i < (m.boss ? 26 : 12); i++) {
@@ -993,6 +1024,124 @@ function bossAttack(m) {
   }
 }
 
+/* ═══════════════ 깜짝 이벤트 (지루하지 않게) ═══════════════ */
+const EVENTS = ['treasure', 'gold', 'giant', 'meteor', 'duck'];
+function updateEvent(dt) {
+  if (S.boss || S.clearDelay) return;
+  const ev = S.event;
+  if (!ev) {
+    S.eventT -= dt;
+    if (S.eventT <= 0) {
+      let pool = EVENTS.filter(e => e !== S.lastEvent);
+      if (!(S.useCam && S.trackMode === 'pose')) pool = pool.filter(e => e !== 'duck');   // 앉기는 몸 인식에서만
+      startEvent(pick(pool));
+    }
+    return;
+  }
+  ev.t += dt;
+  switch (ev.type) {
+    case 'treasure':
+      ev.spawnT -= dt;
+      if (ev.spawnT <= 0 && ev.t < 7) {
+        ev.spawnT = 0.28;
+        const side = Math.random() < 0.5 ? -1 : 1;
+        const c = spawn('coin', { z: rand(0.3, 0.55), wx: side * 0.75, wy: 0.25 });
+        c.vx = -side * rand(0.3, 0.55); c.vy = -rand(0.75, 1.05);
+      }
+      if (ev.t > 9) endEvent(`금화 ${ev.got}개! 💰`);
+      break;
+    case 'meteor':
+      ev.spawnT -= dt;
+      if (ev.spawnT <= 0 && ev.t < 7) {
+        ev.spawnT = 0.35;
+        const mt = spawn('meteor', { z: rand(0.3, 0.55), wx: rand(-0.55, 0.55), wy: -0.6 });
+        mt.vx = rand(-0.1, 0.1); mt.vy = rand(0.45, 0.65);
+      }
+      if (ev.t > 9) endEvent(`별똥별 ${ev.got}개! 🌠`);
+      break;
+    case 'gold':
+      if (ev.t > 0.3 && !S.monsters.some(m => m.kind === 'goldgoblin')) endEvent(ev.got ? null : '황금 고블린이 도망갔다! 💨');
+      break;
+    case 'giant':
+      if (ev.t > 0.3 && !S.monsters.some(m => m.kind === 'giantslime')) endEvent(null);
+      break;
+    case 'duck': updateDuck(ev, dt); break;
+  }
+}
+function startEvent(type) {
+  S.event = { type, t: 0, got: 0, spawnT: 0.6, pauseSpawns: type === 'treasure' || type === 'meteor' || type === 'duck' };
+  S.lastEvent = type;
+  SFX.star();
+  switch (type) {
+    case 'treasure': toast('💰 보물 러시! 금화를 모아요!', 2); say('보물 러시! 금화를 마구 모아요!'); break;
+    case 'meteor': toast('🌠 별똥별 비! 쳐서 모아요!', 2); say('별똥별이 떨어져요! 쳐서 모아요!'); break;
+    case 'gold': { spawn('goldgoblin', { z: 1.0 }); toast('✨ 황금 고블린 등장! 잡으면 1000점!', 2); say('황금 고블린이다! 빨리 잡아요!'); break; }
+    case 'giant': { spawn('giantslime', { z: 1.05, wx: 0 }); toast('🟢 왕슬라임이 굴러온다! 여러 번 때려요!', 2); say('왕슬라임이 굴러와요! 여러 번 때려요!'); break; }
+    case 'duck': startDuck(S.event); break;
+  }
+}
+function endEvent(msg) {
+  if (msg) { toast(msg, 1.6); SFX.clear(); }
+  S.event = null;
+  S.eventT = rand(34, 44);
+}
+
+// 🙇 앉아! — 통나무가 머리 높이로 날아옴, 모두 쪼그려 앉으면 성공
+function noseYs() {
+  const out = {};
+  for (const b of S.landmarks) if ((b[0].visibility ?? 1) > 0.5) out[b.slot] = b[0].y;
+  return out;
+}
+function startDuck(ev) {
+  ev.base = noseYs();
+  ev.phase = 'warn';
+  toast('🙇 통나무가 온다! 앉아!', 2.2);
+  say('통나무가 날아와요! 모두 앉아요!');
+}
+function updateDuck(ev, dt) {
+  // 서 있을 때 기준 코 높이를 계속 보정 (경고 초반 1초)
+  if (ev.t < 1) { const n = noseYs(); for (const k in n) ev.base[k] = Math.min(ev.base[k] ?? 1, n[k]); }
+  ev.logX = ev.t < 2.2 ? null : lerp(-0.3, 1.3, (ev.t - 2.2) / 1.4);
+  if (ev.phase === 'warn' && ev.t >= 2.9) {           // 통나무가 머리 위를 지나는 순간 판정
+    ev.phase = 'done';
+    const n = noseYs(), keys = Object.keys(ev.base);
+    const ducked = keys.filter(k => n[k] != null && n[k] - ev.base[k] > 0.1).length;
+    if (keys.length && ducked === keys.length) {
+      S.score += 500 * keys.length; confettiRain(60); SFX.clear();
+      addText(W / 2, H * 0.4, `모두 피했다! +${500 * keys.length}`, '#8affc1', 1.6); say('잘 피했어요!', false);
+    } else {
+      SFX.pop(); addText(W / 2, H * 0.4, ducked ? `${ducked}명 성공! 😅` : '아이쿠! 😵', '#ffd166', 1.4);
+      if (ducked) S.score += 300 * ducked;
+    }
+  }
+  if (ev.t > 3.8) endEvent(null);
+}
+function drawDuckLog() {
+  const ev = S.event;
+  if (!ev || ev.type !== 'duck') return;
+  const y = H * 0.24, hgt = shortSide() * 0.12;
+  if (ev.logX == null) {     // 경고: 머리 높이에 빨간 띠 + 아래 화살표
+    ctx.save(); ctx.globalAlpha = 0.35 + 0.3 * Math.sin(ev.t * 14);
+    ctx.fillStyle = '#ff4d4d'; ctx.fillRect(0, y - hgt / 2, W, hgt);
+    ctx.globalAlpha = 1; ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = `${Math.round(shortSide() * 0.09)}px Jua, sans-serif`;
+    ctx.fillText('⬇ 앉아! ⬇', W / 2, y + hgt * 1.2);
+    ctx.restore();
+    return;
+  }
+  const x = ev.logX * W, len = W * 0.5;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.fillStyle = '#8a5a2b'; ctx.fillRect(-len / 2, -hgt / 2, len, hgt);
+  ctx.fillStyle = '#6b4424';
+  for (let i = -2; i <= 2; i++) ctx.fillRect(i * len / 5 - 2, -hgt / 2, 4, hgt);
+  ctx.fillStyle = '#c99a5b';
+  ctx.beginPath(); ctx.ellipse(len / 2, 0, hgt * 0.3, hgt / 2, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#8a5a2b'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.ellipse(len / 2, 0, hgt * 0.15, hgt / 4, 0, 0, Math.PI * 2); ctx.stroke();
+  ctx.restore();
+}
+
 /* ═══════════════ 꼬마 기사 (아군) ═══════════════ */
 function spawnAlly() {
   S.ally = { t: 0, dur: 2.6, dir: Math.random() < 0.5 ? 1 : -1, bossHit: false };
@@ -1058,7 +1207,7 @@ function resolveHits() {
   for (const m of S.monsters) {
     if (m.dead || m.cd > 0 || m.z > 1.05) continue;
     if (m.alpha < 0.45) continue;                          // 투명한 유령 / 순간이동 중
-    const item = !!m.K.item;
+    const item = !!m.K.item || !!m.K.treasure;
     for (const p of S.points) {
       if (p.speed < (item ? minSp * 0.25 : minSp)) continue;   // 아이템은 스치기만 해도 획득
       if (!segHitsCircle(p.px, p.py, p.x, p.y, m.sx, m.sy, m.r * pad)) continue;
@@ -1071,6 +1220,17 @@ function resolveHits() {
 function onHit(m, p) {
   const K = m.K;
   const dir = Math.sign(p.x - p.px) || 1;
+  if (K.treasure) {
+    m.dead = true;
+    if (S.event) S.event.got++;
+    const g = K.score * (S.fever > 0 ? 2 : 1);
+    S.score += g;
+    const P = S.players[p.pl || 0]; if (P) P.score += g;
+    SFX.pop(); tone(1200 + Math.random() * 400, 0.08, 'square', 0.04);
+    burst(m.sx, m.sy, m.r, K.draw === 'coin' ? 48 : 200, 10, true);
+    addText(m.sx, m.sy, `+${g}`, '#ffd166', 0.7);
+    return;
+  }
   if (K.item) {
     m.dead = true;
     if (K.item === 'heal') {
@@ -1117,7 +1277,7 @@ function kill(m, dir, pl = 0) {
   const P = S.players[pl];
   if (P) { P.score += gain; if (!K.proj) P.kills++; }
   S.kills[m.kind] = (S.kills[m.kind] || 0) + 1;
-  if (!K.proj) {
+  if (!K.proj && !K.treasure) {
     S.killsAny++;
     S.assist = Math.min(1, S.assist + 0.012);
     if (S.killsAny % CFG.healEvery === 0 && S.hp < S.maxHp) {
@@ -1136,6 +1296,11 @@ function kill(m, dir, pl = 0) {
     const pr = pick(PRAISE);
     toast(`${S.combo} 콤보! ${pr}`, 1.1);
     if (S.combo % 10 === 0) say(`${S.combo} 콤보! ${pr}`, false);
+  }
+  if (K.gold) { confettiRain(80); say('황금 고블린을 잡았어요! 천 점!', false); if (S.event) S.event.got = 1; }
+  if (K.split) {       // 왕슬라임 → 꼬마 슬라임 4마리로 분열
+    for (let i = 0; i < 4; i++) { const c = spawn(K.split, { z: Math.min(1, m.z + 0.08), wx: clamp(m.wx + (i - 1.5) * 0.14, -0.5, 0.5), wy: m.wy }); c.baseWx = c.wx; }
+    toast('💥 뿅! 꼬마들로 갈라졌다!', 1.3);
   }
   if (m.boss) {
     S.boss = null; updateBossHud();
@@ -1226,7 +1391,7 @@ function initProps() {
   for (let z = 1.2; z > 0; z -= 0.22) for (const side of [-1, 1]) S.props.push({ side, z: z + rand(-0.05, 0.05), v: Math.random() });
 }
 function updateProps(dt, moving) {
-  const sp = CFG.propSpeed * (moving ? 1 : 0.3);
+  const sp = CFG.propSpeed * (moving ? 1.9 * (S.pace || 1) : 0.4) * (S.fever > 0 ? 1.4 : 1);
   for (const p of S.props) {
     p.z -= sp * dt;
     if (p.z < -0.15) { p.z += 1.35; p.v = Math.random(); }
@@ -1562,7 +1727,7 @@ function drawMonster(m) {
   ctx.save();
   ctx.globalAlpha = m.alpha;
   // 그림자
-  if (!m.K.proj && !m.K.item) {
+  if (!m.K.proj && !m.K.item && !m.K.treasure) {
     ctx.save(); ctx.globalAlpha = 0.25 * m.alpha; ctx.fillStyle = '#000';
     ctx.beginPath(); ctx.ellipse(m.sx, m.sy + m.r * 1.15, m.r * 0.8, m.r * 0.16, 0, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
@@ -1576,6 +1741,13 @@ function drawMonster(m) {
     ctx.fillStyle = g; ctx.beginPath(); ctx.arc(m.sx, m.sy, m.r * 1.9, 0, Math.PI * 2); ctx.fill();
   }
 
+  if (m.K.draw === 'coin' || m.K.draw === 'meteor') { drawTreasure(m); ctx.restore(); return; }
+  if (m.K.gold) {
+    const g = ctx.createRadialGradient(m.sx, m.sy, m.r * 0.3, m.sx, m.sy, m.r * 2);
+    g.addColorStop(0, 'rgba(255,215,80,.6)'); g.addColorStop(1, 'rgba(255,215,80,0)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(m.sx, m.sy, m.r * 2, 0, Math.PI * 2); ctx.fill();
+    ctx.filter = 'sepia(1) saturate(4) hue-rotate(-12deg) brightness(1.15)';
+  }
   if (m.K.proj) drawProjectile(m);
   else {
     const imgs = SPR.img[m.sprite], meta = SPR.meta[m.sprite];
@@ -1621,6 +1793,22 @@ function drawMonster(m) {
     const bw = m.r * 1.4, bh = Math.max(5, m.r * 0.1), by = m.sy - m.r * 1.35;
     ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(m.sx - bw / 2, by, bw, bh);
     ctx.fillStyle = '#ffd166'; ctx.fillRect(m.sx - bw / 2, by, bw * (m.hp / m.maxHp), bh);
+  }
+}
+
+function drawTreasure(m) {
+  const r = m.r, t = m.t;
+  if (m.K.draw === 'coin') {
+    const sq = Math.abs(Math.cos(t * 8));           // 빙글빙글 도는 금화
+    ctx.fillStyle = '#e8a91e'; ctx.beginPath(); ctx.ellipse(m.sx, m.sy, r * Math.max(0.15, sq), r, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#ffd84a'; ctx.beginPath(); ctx.ellipse(m.sx, m.sy, r * 0.78 * Math.max(0.12, sq), r * 0.78, 0, 0, Math.PI * 2); ctx.fill();
+    if (sq > 0.5) { ctx.fillStyle = '#e8a91e'; ctx.font = `${Math.round(r)}px Jua, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('★', m.sx, m.sy + r * 0.05); }
+  } else {
+    const tail = ctx.createLinearGradient(m.sx, m.sy - r * 4, m.sx, m.sy);
+    tail.addColorStop(0, 'rgba(255,255,255,0)'); tail.addColorStop(1, 'rgba(180,220,255,.8)');
+    ctx.fillStyle = tail; ctx.beginPath(); ctx.moveTo(m.sx - r * 0.5, m.sy); ctx.lineTo(m.sx, m.sy - r * 4); ctx.lineTo(m.sx + r * 0.5, m.sy); ctx.fill();
+    ctx.fillStyle = '#fff6b0'; ctx.font = `${Math.round(r * 2.2)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('⭐', m.sx, m.sy);
   }
 }
 
@@ -1760,6 +1948,27 @@ function drawOverlayText() {
   ctx.restore();
 }
 
+// 속도선: 지평선 중심에서 가장자리로 스쳐 지나감
+const SPEED_LINES = Array.from({ length: 26 }, () => ({ a: Math.random() * Math.PI * 2, d: Math.random(), v: 0.6 + Math.random() }));
+function drawSpeedLines() {
+  const cx = W / 2, cy = horizonY(), R = Math.hypot(W, H) * 0.6;
+  const k = clamp(((S.pace || 1) - 1.05) * 2.2 + (S.fever > 0 ? 0.6 : 0), 0.15, 1);
+  ctx.save();
+  ctx.lineCap = 'round';
+  for (const l of SPEED_LINES) {
+    l.d += 0.035 * l.v * (S.pace || 1) * (S.fever > 0 ? 1.5 : 1);
+    if (l.d > 1) { l.d = 0.35; l.a = Math.random() * Math.PI * 2; }
+    const r0 = R * l.d, r1 = R * (l.d + 0.12);
+    ctx.strokeStyle = `rgba(255,255,255,${0.35 * k * l.d})`;
+    ctx.lineWidth = 2 + 3 * l.d;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(l.a) * r0, cy + Math.sin(l.a) * r0 * 0.7);
+    ctx.lineTo(cx + Math.cos(l.a) * r1, cy + Math.sin(l.a) * r1 * 0.7);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawFeverBorder() {
   if (S.fever <= 0) return;
   const t = performance.now() / 300;
@@ -1804,6 +2013,10 @@ function render(dt) {
     ctx.translate(rand(-a, a), rand(-a, a));
   }
   drawCam();
+  if (S.stage && S.state === 'play') {   // 달리는 발걸음에 맞춰 살짝 출렁
+    const tt = performance.now() / 1000 * 2.4 * (S.pace || 1);
+    ctx.translate(Math.sin(tt) * H * 0.003, Math.abs(Math.sin(tt)) * H * 0.006);
+  }
   if (S.stage) {
     drawHorizon();
     drawGround();
@@ -1815,6 +2028,8 @@ function render(dt) {
     drawFx(dt);
     drawTexts(dt);
   }
+  if (S.stage && S.state === 'play') drawSpeedLines();
+  if (S.stage) drawDuckLog();
   drawBodies();
   drawOverlayText();
   drawFeverBorder();
@@ -2054,7 +2269,8 @@ function frame(ts) {
   S.toastT = Math.max(0, S.toastT - dt);
   if (S.stage) {
     updateAmbient(dt); updateProps(dt, S.state === 'play');
-    S.roadZ = (S.roadZ || 0) + CFG.propSpeed * dt * (S.state === 'play' ? 1 : 0.3) * (S.fever > 0 ? 1.4 : 1);
+    const run = S.state === 'play' ? 1.9 * (S.pace || 1) : 0.4;
+    S.roadZ = (S.roadZ || 0) + CFG.propSpeed * dt * run * (S.fever > 0 ? 1.4 : 1);
   }
 
   switch (S.state) {
@@ -2130,4 +2346,4 @@ loadSprites();
 requestAnimationFrame((t) => { S.lastTs = t; loop(t); });
 
 // 디버그용 (콘솔에서 상태 확인)
-window.__game = { S, SAVE, SPR, startStage, showMap, frame, spawn, spawnBoss, assignSlots, startMusic, initAudio };
+window.__game = { S, SAVE, SPR, startStage, showMap, frame, spawn, spawnBoss, assignSlots, startMusic, initAudio, startEvent };

@@ -31,6 +31,10 @@ export const KINDS = {
   shield:    { name: '방패 고블린', hp: 3, speed: 0.75, move: 'run',    score: 220, wy: [0.04, 0.2], scale: 1.1 },
   skeleton:  { name: '해골 기사',   hp: 2, speed: 1.0,  move: 'run',    score: 170, wy: [0.02, 0.2] },
   darkknight: { name: '흑기사',   hp: 3, speed: 0.8,  move: 'run',    score: 260, wy: [0.02, 0.2], scale: 1.1 },
+  goldgoblin: { name: '황금 고블린', sprite: 'goblin', hp: 1, speed: 1.0, move: 'zigzag', score: 1000, wy: [0.0, 0.18], gold: true, scale: 0.95 },
+  giantslime: { name: '왕슬라임', sprite: 'slime', hp: 10, speed: 0.55, move: 'bob', score: 800, wy: [0.08, 0.14], scale: 2.1, split: 'minislime' },
+  coin:      { name: '금화', hp: 1, speed: 0, move: 'arc', score: 50, proj: false, treasure: true, scale: 0.4, draw: 'coin' },
+  meteor:    { name: '별똥별', hp: 1, speed: 0, move: 'fall', score: 80, treasure: true, scale: 0.45, draw: 'meteor' },
   minislime: { name: '꼬마슬라임', sprite: 'slime', hp: 1, speed: 1.2, move: 'hop', score: 60, wy: [0.0, 0.2], scale: 0.6 },
 
   heart:     { name: '하트', item: 'heal',  speed: 0.5,  move: 'float', wy: [-0.22, 0.02], scale: 0.85 },
