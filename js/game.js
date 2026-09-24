@@ -27,7 +27,7 @@ const TRACK = {
     glowIds: [19, 20],
     edges: [[11,12],[11,13],[13,15],[12,14],[14,16],[15,17],[15,19],[17,19],[16,18],[16,20],[18,20],
             [11,23],[12,24],[23,24]],
-    hitPad: 1.4, minVis: 0.6,
+    hitPad: 1.4, minVis: 0.45,
   },
   hand: {
     hitIds: [4, 8, 12, 16, 20, 9],
@@ -336,6 +336,7 @@ const spriteURL = (kind) => `assets/monsters/${(KINDS[kind] && KINDS[kind].sprit
 const S = {
   state: 'menu', stateT: 0,
   useCam: false, camReady: false, trackMode: SAVE.mode, loadedMode: null, delegate: '', debug: false,
+  poseModel: 'full', slowT: 0,
   stageIdx: 0, stage: null, world: 0,
   hp: CFG.playerHp, maxHp: CFG.playerHp, score: 0, combo: 0, maxCombo: 0,
   kills: {}, killsAny: 0, dodged: 0, hurtCount: 0, missionsComplete: false,
@@ -1735,6 +1736,27 @@ function groundDeco(sc, band, zc, bh) {
   }
 }
 
+// 카메라를 가리지 않는 반투명 레일: 가장자리 선 + 발밑으로 흘러오는 가로선
+function drawFlowLines() {
+  const rail = WORLDS[S.world].rail;
+  ctx.save();
+  ctx.lineCap = 'round';
+  for (const wx of [-ROAD_W, ROAD_W]) {
+    const a = toScreen(wx, GROUND_Y, 1.25), b = toScreen(wx, GROUND_Y, -0.1);
+    ctx.strokeStyle = `rgba(${rail},.55)`; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  }
+  const off = S.roadZ % 0.18;
+  for (let z = 1.25 + off; z > -0.1; z -= 0.18) {
+    if (z > 1.25) continue;
+    const a = toScreen(-ROAD_W, GROUND_Y, z), b = toScreen(ROAD_W, GROUND_Y, z);
+    ctx.strokeStyle = `rgba(${rail},${clamp(1.25 - z, 0.08, 0.45)})`;
+    ctx.lineWidth = Math.max(1.5, 5 * project(z) / project(0));
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawGround() {
   const g = GROUND[WORLDS[S.world].scenery] || GROUND.forest;
   const off = S.roadZ % (BAND * 2);
@@ -2064,7 +2086,7 @@ function drawDebug() {
   for (const m of S.monsters) { ctx.beginPath(); ctx.arc(m.sx, m.sy, m.r * pad, 0, Math.PI * 2); ctx.stroke(); }
   ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(8, H - 84, 250, 74);
   ctx.fillStyle = '#8affc1'; ctx.font = '12px ui-monospace, monospace';
-  ctx.fillText(`fps ${S.fps.toFixed(0)}  detect ${S.detectMs.toFixed(1)}ms  ${S.trackMode}/${S.delegate}`, 16, H - 64);
+  ctx.fillText(`fps ${S.fps.toFixed(0)}  detect ${S.detectMs.toFixed(1)}ms  ${S.trackMode}-${S.poseModel}/${S.delegate}`, 16, H - 64);
   ctx.fillText(`bodies ${S.landmarks.length}  pts ${S.points.length}  swipe>${swipeMin().toFixed(0)}px/s`, 16, H - 48);
   ctx.fillText(`mobs ${S.monsters.length}  state ${S.state}  hp ${S.hp}`, 16, H - 32);
   ctx.restore();
@@ -2083,7 +2105,7 @@ function render(dt) {
   }
   if (S.stage) {
     drawHorizon();
-    drawGround();
+    drawFlowLines();
     drawProps();
     drawAmbient();
     for (const m of S.monsters) drawMonster(m);
@@ -2134,13 +2156,24 @@ function track(nowMs, dt) {
   }
   S.detectMs = S.detectMs * 0.8 + (performance.now() - t0) * 0.2;
   // 사람마다 번호(slot)를 고정: 앞 프레임 위치와 가장 가까운 사람에게 같은 번호
-  S.landmarks = assignSlots(res.landmarks || []);
+  S.landmarks = holdLost(assignSlots(res.landmarks || []));
+  // full 모델이 이 폰에 너무 무거우면(평균 70ms 초과가 3초) 가벼운 모델로 교체
+  if (S.trackMode === 'pose' && S.poseModel === 'full') {
+    S.slowT = S.detectMs > 70 ? (S.slowT || 0) + vdt : 0;
+    if (S.slowT > 3) {
+      S.poseModel = 'lite'; S.slowT = 0;
+      const old = landmarker; landmarker = null; old.close();
+      initTracker('pose', S.delegate).catch(e => console.error(e));
+      console.warn('full 모델이 느려서 lite로 전환');
+    }
+  }
   if (S.trackMode === 'pose' && S.landmarks.length > 1 && S.stage) S.multi = true;
   lastBodyCount = S.landmarks.length;
   const maxJump = shortSide() * 0.35;
   const T = TRACK[S.trackMode];
   const seen = new Set();
   S.landmarks.forEach((body) => {
+    if (body.held) return;
     const bi = body.slot;
     for (const id of T.hitIds) {
       const lm = body[id];
@@ -2159,6 +2192,21 @@ function track(nowMs, dt) {
     }
   });
   for (const k of [...prevPts.keys()]) if (!seen.has(k)) prevPts.delete(k);
+}
+
+// 잠깐(0.4초) 인식이 끊긴 사람은 마지막 뼈대를 유지 (타격 점은 만들지 않음)
+const lastSeenBody = {};
+function holdLost(bodies) {
+  const now = performance.now(), have = new Set(bodies.map(b => b.slot));
+  for (const b of bodies) lastSeenBody[b.slot] = { b, t: now };
+  const out = bodies.slice();
+  for (const k in lastSeenBody) {
+    const e = lastSeenBody[k];
+    if (have.has(Number(k))) continue;
+    if (now - e.t < 400) { const c = e.b.slice(); c.slot = e.b.slot; c.held = true; out.push(c); }
+    else delete lastSeenBody[k];
+  }
+  return out.sort((a, b) => a.slot - b.slot);
 }
 
 // 번호 고정 추적: 어깨(손 모드는 손목) 중심을 앞 프레임 기록과 매칭
@@ -2216,16 +2264,16 @@ async function initTracker(mode, force = null) {
   const fileset = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
   const make = (delegate) => mode === 'pose'
     ? PoseLandmarker.createFromOptions(fileset, {
-        baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task", delegate },
+        baseOptions: { modelAssetPath: `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_${S.poseModel}/float16/1/pose_landmarker_${S.poseModel}.task`, delegate },
         runningMode: "VIDEO", numPoses: CFG.maxPlayers,
-        minPoseDetectionConfidence: 0.4, minPosePresenceConfidence: 0.4, minTrackingConfidence: 0.4,
+        minPoseDetectionConfidence: 0.3, minPosePresenceConfidence: 0.3, minTrackingConfidence: 0.3,
       })
     : HandLandmarker.createFromOptions(fileset, {
         baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task", delegate },
         runningMode: "VIDEO", numHands: 2 * CFG.maxPlayers,
         minHandDetectionConfidence: 0.35, minHandPresenceConfidence: 0.35, minTrackingConfidence: 0.35,
       });
-  if (force === 'CPU') { landmarker = await make("CPU"); S.delegate = 'CPU'; return; }
+  if (force === 'CPU' || force === 'GPU') { landmarker = await make(force); S.delegate = force; return; }
   try { landmarker = await make("GPU"); S.delegate = 'GPU'; }
   catch (e) { console.warn('GPU 실패 → CPU', e); landmarker = await make("CPU"); S.delegate = 'CPU'; }
 }
