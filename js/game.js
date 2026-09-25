@@ -1965,29 +1965,62 @@ function drawTexts(dt) {
 }
 
 const PLAYER_COLORS = ['rgba(110,231,255,.85)', 'rgba(255,126,182,.85)', 'rgba(198,255,94,.85)'];
+// 만화풍 장갑 손: (x,y) 위치, ang 방향(손가락이 향하는 쪽), 크기 r, 플레이어 색
+function drawGlove(x, y, ang, r, color, mirror) {
+  ctx.save();
+  ctx.translate(x, y); ctx.rotate(ang + Math.PI / 2);
+  if (mirror) ctx.scale(-1, 1);
+  ctx.lineWidth = Math.max(2, r * 0.12); ctx.strokeStyle = '#1b1330'; ctx.fillStyle = color;
+  // 손가락 4개
+  for (let i = 0; i < 4; i++) {
+    const fx = (i - 1.5) * r * 0.36, fl = r * (i === 1 || i === 2 ? 0.95 : 0.8);
+    ctx.beginPath(); ctx.ellipse(fx, -r * 0.35 - fl * 0.45, r * 0.19, fl * 0.5, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  }
+  // 엄지
+  ctx.beginPath(); ctx.ellipse(-r * 0.72, r * 0.02, r * 0.2, r * 0.36, -0.7, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  // 손바닥
+  ctx.beginPath(); ctx.ellipse(0, r * 0.05, r * 0.66, r * 0.58, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  // 하이라이트 + 흰 소매
+  ctx.fillStyle = 'rgba(255,255,255,.45)';
+  ctx.beginPath(); ctx.ellipse(-r * 0.22, -r * 0.12, r * 0.18, r * 0.12, -0.5, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath(); ctx.roundRect ? ctx.roundRect(-r * 0.62, r * 0.55, r * 1.24, r * 0.38, r * 0.14) : ctx.rect(-r * 0.62, r * 0.55, r * 1.24, r * 0.38);
+  ctx.fill(); ctx.stroke();
+  ctx.restore();
+}
+
 function drawBodies() {
   const T = TRACK[S.trackMode];
-  ctx.save();
-  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  const pose = S.trackMode === 'pose';
+  const r = shortSide() * (pose ? 0.06 : 0.05);
   S.landmarks.forEach((body) => {
     const bi = body.slot ?? 0;
-    const P = body.map(lmToScreen);
+    const color = PLAYER_HEX[(pose ? bi : Math.floor(bi / 2)) % 3];
     const vis = (i) => !T.minVis || (body[i].visibility ?? 1) >= T.minVis;
-    ctx.strokeStyle = PLAYER_COLORS[bi % PLAYER_COLORS.length];
-    ctx.lineWidth = S.trackMode === 'pose' ? 7 : 4;
-    ctx.beginPath();
-    for (const [a, b] of T.edges) { if (vis(a) && vis(b)) { ctx.moveTo(P[a].x, P[a].y); ctx.lineTo(P[b].x, P[b].y); } }
-    ctx.stroke();
-    const gr = S.trackMode === 'pose' ? shortSide() * 0.045 : 7;
-    ctx.fillStyle = S.trackMode === 'pose' ? PLAYER_HEX[bi % 3] : 'rgba(255,209,102,.95)';
-    for (const id of T.glowIds) if (vis(id)) { ctx.beginPath(); ctx.arc(P[id].x, P[id].y, gr, 0, Math.PI * 2); ctx.fill(); }
-    if (S.trackMode === 'pose' && vis(0) && (S.landmarks.length > 1 || S.multi)) {
-      ctx.fillStyle = PLAYER_COLORS[bi % PLAYER_COLORS.length];
-      ctx.font = `${Math.round(shortSide() * 0.06)}px Jua, sans-serif`; ctx.textAlign = 'center';
-      ctx.fillText(`${bi + 1}P`, P[0].x, P[0].y - shortSide() * 0.13);
+    const P = (i) => lmToScreen(body[i]);
+    ctx.globalAlpha = body.held ? 0.5 : 1;
+    if (pose) {
+      // 양손: 손목·검지·새끼 평균 위치, 팔꿈치→손목 방향
+      for (const [el, wr, pi, ix, mirror] of [[13, 15, 17, 19, false], [14, 16, 18, 20, true]]) {
+        if (!vis(wr)) continue;
+        const w = P(wr), e = P(el), a = P(pi), b = P(ix);
+        const x = (w.x * 2 + a.x + b.x) / 4, y = (w.y * 2 + a.y + b.y) / 4;
+        const ang = vis(el) ? Math.atan2(w.y - e.y, w.x - e.x) : -Math.PI / 2;
+        drawGlove(x + Math.cos(ang) * r * 0.4, y + Math.sin(ang) * r * 0.4, ang, r, color, mirror);
+      }
+      if (vis(0) && (S.landmarks.length > 1 || S.multi)) {
+        const n = P(0);
+        ctx.font = `${Math.round(shortSide() * 0.06)}px Jua, sans-serif`; ctx.textAlign = 'center';
+        ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.strokeText(`${bi + 1}P`, n.x, n.y - shortSide() * 0.1);
+        ctx.fillStyle = color; ctx.fillText(`${bi + 1}P`, n.x, n.y - shortSide() * 0.1);
+      }
+    } else {
+      // 손 모드: 손바닥 중심(9), 손목(0)→중지 뿌리(9) 방향
+      const w = P(0), m = P(9);
+      drawGlove(m.x, m.y, Math.atan2(m.y - w.y, m.x - w.x), r, color, (body[0].x > body[9].x));
     }
   });
-  ctx.restore();
+  ctx.globalAlpha = 1;
   // 휘두른 궤적 (노랑 = 타격 속도, 하늘색 = 부족)
   ctx.save(); ctx.lineCap = 'round';
   for (const t of S.trails) {
