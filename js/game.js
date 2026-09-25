@@ -2180,11 +2180,10 @@ function track(nowMs, dt) {
     if (!workerBusy && video.currentTime !== lastVideoTime) {
       lastVideoTime = video.currentTime;
       workerBusy = true;
-      const vw = video.videoWidth || 640, vh = video.videoHeight || 360;
-      const rw = Math.min(640, vw), rh = Math.round(rw * vh / vw);
       const vt = video.currentTime;
-      createImageBitmap(video, { resizeWidth: rw, resizeHeight: rh, resizeQuality: 'low' })
-        .then(bmp => worker.postMessage({ type: 'frame', bitmap: bmp, ts: performance.now(), vt }, [bmp]))
+      const crop = currentCrop();
+      makeFrame(crop)
+        .then(bmp => worker.postMessage({ type: 'frame', bitmap: bmp, ts: performance.now(), vt, crop }, [bmp]))
         .catch(() => { workerBusy = false; });
     }
     return;
@@ -2210,6 +2209,73 @@ function track(nowMs, dt) {
   applyResult(res.landmarks || [], vdt, performance.now() - t0);
 }
 
+/* ── 인식률 향상: 스마트 크롭 + 어두운 방 밝기 보정 ── */
+// 최근 2초 동안 사람이 있던 영역(정규화 좌표)을 넉넉히 잘라 확대 → 멀리 있는 작은 사람도 크게 보임
+const cropBox = { x0: 1, y0: 1, x1: 0, y1: 0, t: 0 };
+function updateCropBox(landmarks) {
+  const now = performance.now();
+  if (now - cropBox.t > 2000) Object.assign(cropBox, { x0: 1, y0: 1, x1: 0, y1: 0 });
+  for (const b of landmarks) for (const i of [0, 11, 12, 15, 16, 19, 20, 23, 24]) {
+    const p = b[i]; if (!p || (p.visibility ?? 1) < 0.3) continue;
+    cropBox.x0 = Math.min(cropBox.x0, p.x); cropBox.x1 = Math.max(cropBox.x1, p.x);
+    cropBox.y0 = Math.min(cropBox.y0, p.y); cropBox.y1 = Math.max(cropBox.y1, p.y);
+    cropBox.t = now;
+  }
+}
+function currentCrop() {
+  const full = { x: 0, y: 0, w: 1, h: 1 };
+  if (S.trackMode !== 'pose' || performance.now() - cropBox.t > 1200 || cropBox.x1 <= cropBox.x0) return full;
+  // 팔을 뻗을 여유 + 새로 들어올 사람을 위해 넉넉히 (최소 화면의 60%)
+  let w = (cropBox.x1 - cropBox.x0) * 1.9 + 0.2, h = (cropBox.y1 - cropBox.y0) * 1.6 + 0.25;
+  w = clamp(w, 0.6, 1); h = clamp(Math.max(h, w * 0.75), 0.6, 1);
+  const cx = (cropBox.x0 + cropBox.x1) / 2, cy = (cropBox.y0 + cropBox.y1) / 2;
+  return { x: clamp(cx - w / 2, 0, 1 - w), y: clamp(cy - h / 2, 0, 1 - h), w, h };
+}
+let frameCanvas = null, frameCtx = null, boost = 1, lumaT = 0;
+const lumaCanvas = document.createElement('canvas'); lumaCanvas.width = 32; lumaCanvas.height = 18;
+const lumaCtx = lumaCanvas.getContext('2d', { willReadFrequently: true });
+function measureLuma() {      // 1초마다 화면 밝기 측정 → 어두우면 보정
+  if (performance.now() - lumaT < 1000) return;
+  lumaT = performance.now();
+  try {
+    lumaCtx.drawImage(video, 0, 0, 32, 18);
+    const d = lumaCtx.getImageData(0, 0, 32, 18).data;
+    let sum = 0; for (let i = 0; i < d.length; i += 4) sum += d[i] * 0.3 + d[i + 1] * 0.59 + d[i + 2] * 0.11;
+    S.luma = sum / (d.length / 4);
+    boost = S.luma < 60 ? 1.6 : S.luma < 90 ? 1.3 : 1;
+  } catch { /* 무시 */ }
+}
+async function makeFrame(c) {
+  measureLuma();
+  const vw = video.videoWidth || 960, vh = video.videoHeight || 540;
+  const sx = c.x * vw, sy = c.y * vh, sw = c.w * vw, sh = c.h * vh;
+  const rw = Math.round(Math.min(960, sw)), rh = Math.round(rw * sh / sw);
+  if (boost > 1 && typeof OffscreenCanvas !== 'undefined') {
+    if (!frameCanvas || frameCanvas.width !== rw || frameCanvas.height !== rh) {
+      frameCanvas = new OffscreenCanvas(rw, rh); frameCtx = frameCanvas.getContext('2d');
+    }
+    frameCtx.filter = `brightness(${boost}) contrast(1.15)`;
+    frameCtx.drawImage(video, sx, sy, sw, sh, 0, 0, rw, rh);
+    return frameCanvas.transferToImageBitmap();
+  }
+  return createImageBitmap(video, sx, sy, sw, sh, { resizeWidth: rw, resizeHeight: rh, resizeQuality: 'medium' });
+}
+// 잘라낸 영역 좌표 → 전체 영상 좌표
+function uncrop(landmarks, c) {
+  if (!c || (c.w === 1 && c.h === 1)) return landmarks;
+  return landmarks.map(b => b.map(p => ({ x: c.x + p.x * c.w, y: c.y + p.y * c.h, visibility: p.visibility })));
+}
+
+function plausibleBody(b) {
+  const v = (i) => (b[i].visibility ?? 1);
+  if (v(0) < 0.5 || v(11) < 0.5 || v(12) < 0.5) return false;
+  const sw = Math.hypot(b[11].x - b[12].x, b[11].y - b[12].y);
+  if (sw < 0.02 || sw > 0.6) return false;
+  const shoulderY = (b[11].y + b[12].y) / 2;
+  if (b[0].y > shoulderY) return false;                        // 코가 어깨보다 아래면 이상함
+  return shoulderY - b[0].y < sw * 2.5;                        // 목이 비정상적으로 길면 버림
+}
+
 function onWorkerMessage(e) {
   const m = e.data;
   if (m.type === 'ready') { S.delegate = m.delegate; return; }
@@ -2218,13 +2284,17 @@ function onWorkerMessage(e) {
   if (!m.landmarks) return;
   const vdt = lastResultVT < 0 ? 1 / 30 : clamp(m.vt - lastResultVT, 0.012, 0.25);
   lastResultVT = m.vt;
-  workerResult = { landmarks: m.landmarks, vdt, ms: m.ms };
+  const lms = uncrop(m.landmarks, m.crop);
+  updateCropBox(lms);
+  workerResult = { landmarks: lms, vdt, ms: m.ms };
 }
 
 function applyResult(landmarks, vdt, ms) {
   lastFrameAt = performance.now();
   S.detectMs = S.detectMs * 0.8 + ms * 0.2;
   // 사람마다 번호(slot)를 고정: 앞 프레임 위치와 가장 가까운 사람에게 같은 번호
+  // 헛인식 거르기: 코·양어깨가 확실하고, 어깨 폭·몸 비율이 사람다운 것만
+  if (S.trackMode === 'pose') landmarks = landmarks.filter(plausibleBody);
   S.landmarks = holdLost(assignSlots(landmarks));
   // full 모델이 이 폰에 너무 무거우면(평균 70ms 초과가 3초) 가벼운 모델로 교체
   if (S.trackMode === 'pose' && S.poseModel === 'full') {
@@ -2321,7 +2391,7 @@ function assignSlots(bodies) {
 async function initCamera() {
   if (video.srcObject) return;
   const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: 'user', width: { ideal: 960 }, height: { ideal: 540 }, frameRate: { ideal: 30 } },
+    video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
     audio: false,
   });
   video.srcObject = stream;
@@ -2467,9 +2537,17 @@ function frame(ts) {
   S.trails = S.trails.filter(t => t.life > 0);
   if (S.trails.length > 240) S.trails.splice(0, S.trails.length - 240);
 
-  // 인식 상태 표시
+  // 인식 상태 표시 + 환경 안내 (어두움 / 너무 멀거나 가까움)
   if (S.useCam && S.stage) {
     const n = S.landmarks.length;
+    let hint = '';
+    if (S.luma != null && S.luma < 45) hint = '방이 어두워요 🔦 불을 켜 주세요';
+    else if (n && S.trackMode === 'pose') {
+      const sw = S.landmarks.reduce((a, b) => a + Math.abs(b[11].x - b[12].x), 0) / n;   // 평균 어깨 폭(화면 비율)
+      if (sw < 0.045) hint = '조금 더 가까이 와 주세요 👣';
+      else if (sw > 0.3) hint = '한 걸음 뒤로 가 주세요 👣';
+    }
+    if (hint !== S._hint) { S._hint = hint; toast(hint, hint ? 2.5 : 0); }
     if (n !== S._lastN) {
       S._lastN = n;
       UI.handState.className = n ? 'on' : 'off';

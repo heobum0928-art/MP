@@ -54,6 +54,6 @@ self.onmessage = async (e) => {
     bmp.close();
     // 필요한 값만 평탄하게 전달
     const out = landmarks && landmarks.map(b => b.map(p => ({ x: p.x, y: p.y, visibility: p.visibility ?? 1 })));
-    self.postMessage({ type: 'result', landmarks: out, ms: performance.now() - t0, id: msg.id, vt: msg.vt });
+    self.postMessage({ type: 'result', landmarks: out, ms: performance.now() - t0, id: msg.id, vt: msg.vt, crop: msg.crop });
   }
 };
