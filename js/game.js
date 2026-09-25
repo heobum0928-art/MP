@@ -63,9 +63,9 @@ const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const tri = (x) => 1 - 4 * Math.abs(((x % 1) + 1) % 1 - 0.5);   // -1..1 삼각파
 
 /* ═══════════════ 캔버스 / 투영 ═══════════════ */
-let W = 0, H = 0, DPR = 1;
+let W = 0, H = 0, DPR = 1, lowQuality = false, slowFpsT = 0;
 function resize() {
-  DPR = Math.min(window.devicePixelRatio || 1, 1.5);
+  DPR = Math.min(window.devicePixelRatio || 1, lowQuality ? 1 : 1.5);
   W = canvas.clientWidth; H = canvas.clientHeight;
   canvas.width = Math.round(W * DPR); canvas.height = Math.round(H * DPR);
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
@@ -98,7 +98,7 @@ function lmToScreen(lm) {
 /* ═══════════════ 저장 (이 기기 브라우저에만) ═══════════════ */
 const SAVE_KEY = 'motion-monster-hunter-v1';
 const SAVE = (() => {
-  const def = { unlocked: 1, stars: {}, best: 0, music: true, voice: true, mode: 'pose' };
+  const def = { unlocked: 1, stars: {}, best: 0, music: true, voice: true, mode: 'pose', god: false };
   try { return { ...def, ...JSON.parse(localStorage.getItem(SAVE_KEY) || '{}') }; } catch { return def; }
 })();
 function persist() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(SAVE)); } catch { /* 저장 불가 환경 */ } }
@@ -384,7 +384,7 @@ function missionHTML(m, withCount) {
 /* ═══════════════ HUD ═══════════════ */
 let hudCache = '';
 function updateHud() {
-  const hearts = '❤️'.repeat(Math.max(0, S.hp)) + '🤍'.repeat(Math.max(0, S.maxHp - S.hp));
+  const hearts = SAVE.god ? '🛡️ 무적' : '❤️'.repeat(Math.max(0, S.hp)) + '🤍'.repeat(Math.max(0, S.maxHp - S.hp));
   const st = S.stage;
   const missions = st ? st.missions.map(m => missionHTML(m, true)).join('') : '';
   const players = S.multi ? S.players.map((p, i) => `<span style="color:${PLAYER_HEX[i]}">${i + 1}P ${p.kills}</span>`).join('') : '';
@@ -933,7 +933,8 @@ function reach(m) {
 
 function hurt(n) {
   if (S.state !== 'play' || S.clearDelay) return;   // 미션 완료 직후엔 안 다침
-  S.hp -= n; S.hurtCount += n; S.combo = 0;
+  if (!SAVE.god) S.hp -= n;       // 무적 모드: 하트는 안 줄고 반응만
+  S.hurtCount += n; S.combo = 0;
   S.assist = Math.max(CFG.assistMin, S.assist - 0.09);
   S.flashRed = 1; S.shake = Math.max(S.shake, 0.4);
   SFX.hurt();
@@ -1227,9 +1228,7 @@ function drawAlly() {
   const size = a.r * meta.sizePerRadius;
   const frame = Math.sin(a.t * 18) > 0 ? 4 : 5;
   ctx.save();
-  const g = ctx.createRadialGradient(a.x, a.y, a.r * 0.3, a.x, a.y, a.r * 1.8);
-  g.addColorStop(0, 'rgba(255,230,120,.45)'); g.addColorStop(1, 'rgba(255,230,120,0)');
-  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(a.x, a.y, a.r * 1.8, 0, Math.PI * 2); ctx.fill();
+  drawGlow(a.x, a.y, a.r * 1.8, '255,230,120', 0.45);
   ctx.translate(a.x, a.y);
   if (a.dir < 0) ctx.scale(-1, 1);
   ctx.rotate(0.12);
@@ -1392,7 +1391,8 @@ function burst(x, y, r, hue, n = 16, confetti = false) {
       life: 1, size: rand(3, 7) * (r / 70 + 0.6), hue: confetti && Math.random() < 0.5 ? rand(0, 360) : hue,
       rect: confetti && Math.random() < 0.6, rot: rand(0, 6), vr: rand(-10, 10) });
   }
-  if (S.fx.length > 600) S.fx.splice(0, S.fx.length - 600);
+  const cap = lowQuality ? 250 : 600;
+  if (S.fx.length > cap) S.fx.splice(0, S.fx.length - cap);
 }
 function confettiRain(n) {
   for (let i = 0; i < n; i++) {
@@ -1808,6 +1808,23 @@ function drawGround() {
   ctx.fillStyle = fog; ctx.fillRect(0, yh - 2, W, H * 0.08 + 2);
 }
 
+// 방사형 빛(오라)을 색마다 한 번만 만들어 재사용
+const glowCache = {};
+function glowImg(rgb, a0) {
+  const key = rgb + a0;
+  if (glowCache[key]) return glowCache[key];
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d'), gr = g.createRadialGradient(64, 64, 16, 64, 64, 64);
+  gr.addColorStop(0, `rgba(${rgb},${a0})`); gr.addColorStop(1, `rgba(${rgb},0)`);
+  g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+  return (glowCache[key] = c);
+}
+function drawGlow(x, y, r, rgb, a0 = 0.35, alpha = 1) {
+  const pa = ctx.globalAlpha; ctx.globalAlpha = pa * alpha;
+  ctx.drawImage(glowImg(rgb, a0), x - r, y - r, r * 2, r * 2);
+  ctx.globalAlpha = pa;
+}
+
 function drawMonster(m) {
   if (m.sx + m.r * 3 < 0 || m.sx - m.r * 3 > W) return;
   ctx.save();
@@ -1819,19 +1836,12 @@ function drawMonster(m) {
     ctx.restore();
   }
   // 오라: 보스 / 아이템 / 폭탄 경고
-  const aura = m.boss ? 'rgba(255,60,90,' : m.K.item ? (m.K.item === 'heal' ? 'rgba(255,110,170,' : 'rgba(255,220,90,') : m.K.bomb ? 'rgba(255,90,40,' : null;
-  if (aura) {
-    const pulse = m.K.bomb ? 0.25 + 0.2 * Math.sin(m.t * 10) : 0.35;
-    const g = ctx.createRadialGradient(m.sx, m.sy, m.r * 0.5, m.sx, m.sy, m.r * 1.9);
-    g.addColorStop(0, aura + pulse + ')'); g.addColorStop(1, aura + '0)');
-    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(m.sx, m.sy, m.r * 1.9, 0, Math.PI * 2); ctx.fill();
-  }
+  const aura = m.boss ? '255,60,90' : m.K.item ? (m.K.item === 'heal' ? '255,110,170' : '255,220,90') : m.K.bomb ? '255,90,40' : null;
+  if (aura) drawGlow(m.sx, m.sy, m.r * 1.9, aura, 0.45, m.K.bomb ? 0.55 + 0.45 * Math.sin(m.t * 10) : 0.8);
 
   if (m.K.draw === 'coin' || m.K.draw === 'meteor') { drawTreasure(m); ctx.restore(); return; }
   if (m.K.gold) {
-    const g = ctx.createRadialGradient(m.sx, m.sy, m.r * 0.3, m.sx, m.sy, m.r * 2);
-    g.addColorStop(0, 'rgba(255,215,80,.6)'); g.addColorStop(1, 'rgba(255,215,80,0)');
-    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(m.sx, m.sy, m.r * 2, 0, Math.PI * 2); ctx.fill();
+    drawGlow(m.sx, m.sy, m.r * 2, '255,215,80', 0.6);
     ctx.filter = 'sepia(1) saturate(4) hue-rotate(-12deg) brightness(1.15)';
   }
   if (m.K.proj) drawProjectile(m);
@@ -2102,12 +2112,7 @@ const SOOT = Array.from({ length: 14 }, () => ({ x: Math.random(), y: Math.rando
 function drawSoot() {
   const a = clamp(S.soot / 1.4, 0, 1);
   ctx.save();
-  for (const s of SOOT) {
-    const x = s.x * W, y = s.y * H, r = s.r * shortSide();
-    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-    g.addColorStop(0, `rgba(20,16,14,${0.85 * a})`); g.addColorStop(1, 'rgba(20,16,14,0)');
-    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-  }
+  for (const s of SOOT) drawGlow(s.x * W, s.y * H, s.r * shortSide(), '20,16,14', 0.85, a);
   ctx.restore();
 }
 
@@ -2119,7 +2124,7 @@ function drawDebug() {
   for (const m of S.monsters) { ctx.beginPath(); ctx.arc(m.sx, m.sy, m.r * pad, 0, Math.PI * 2); ctx.stroke(); }
   ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(8, H - 84, 250, 74);
   ctx.fillStyle = '#8affc1'; ctx.font = '12px ui-monospace, monospace';
-  ctx.fillText(`fps ${S.fps.toFixed(0)}  detect ${S.detectMs.toFixed(1)}ms  ${S.trackMode}-${S.poseModel}/${S.delegate}`, 16, H - 64);
+  ctx.fillText(`fps ${S.fps.toFixed(0)}  detect ${S.detectMs.toFixed(1)}ms  ${S.trackMode}-${S.poseModel}/${S.delegate}${S.worker ? "/W" : ""}${lowQuality ? "/LQ" : ""}`, 16, H - 64);
   ctx.fillText(`bodies ${S.landmarks.length}  pts ${S.points.length}  swipe>${swipeMin().toFixed(0)}px/s`, 16, H - 48);
   ctx.fillText(`mobs ${S.monsters.length}  state ${S.state}  hp ${S.hp}`, 16, H - 32);
   ctx.restore();
@@ -2164,22 +2169,37 @@ let lastVideoTime = -1;
 let lastFrameAt = 0, detectErrors = 0, lastBodyCount = 0;
 const prevPts = new Map();
 
+// 인식: 워커가 있으면 워커로(화면 안 막힘), 없으면 메인 스레드에서
+let worker = null, workerBusy = false, workerResult = null, lastResultVT = -1;
 function track(nowMs, dt) {
   S.points = [];
-  if (!landmarker || video.readyState < 2) { S.landmarks = []; return; }
+  if (video.readyState < 2 || (!landmarker && !worker)) { S.landmarks = []; return; }
+  if (worker) {
+    if (workerResult) { const r = workerResult; workerResult = null; applyResult(r.landmarks, r.vdt, r.ms); }
+    else if (performance.now() - lastFrameAt > 800) { S.landmarks = []; prevPts.clear(); }
+    if (!workerBusy && video.currentTime !== lastVideoTime) {
+      lastVideoTime = video.currentTime;
+      workerBusy = true;
+      const vw = video.videoWidth || 640, vh = video.videoHeight || 360;
+      const rw = Math.min(640, vw), rh = Math.round(rw * vh / vw);
+      const vt = video.currentTime;
+      createImageBitmap(video, { resizeWidth: rw, resizeHeight: rh, resizeQuality: 'low' })
+        .then(bmp => worker.postMessage({ type: 'frame', bitmap: bmp, ts: performance.now(), vt }, [bmp]))
+        .catch(() => { workerBusy = false; });
+    }
+    return;
+  }
   if (video.currentTime === lastVideoTime) {
     // 카메라가 멈추면(백그라운드·잠금 후) 옛 뼈대를 지워 자동 일시정지가 걸리게
     if (performance.now() - lastFrameAt > 600) { S.landmarks = []; prevPts.clear(); }
     return;
   }
-  lastFrameAt = performance.now();
   const vdt = lastVideoTime < 0 ? dt : clamp(video.currentTime - lastVideoTime, 0.012, 0.25);
   lastVideoTime = video.currentTime;
   const t0 = performance.now();
   let res;
   try { res = landmarker.detectForVideo(video, nowMs); detectErrors = 0; }
   catch (e) {
-    // GPU 인식이 실행 중에 계속 실패하면 CPU로 다시 만듦
     if (++detectErrors === 30 && S.delegate === 'GPU') {
       console.warn('detect 실패 반복 → CPU로 전환', e);
       landmarker.close(); landmarker = null;
@@ -2187,17 +2207,33 @@ function track(nowMs, dt) {
     }
     return;
   }
-  S.detectMs = S.detectMs * 0.8 + (performance.now() - t0) * 0.2;
+  applyResult(res.landmarks || [], vdt, performance.now() - t0);
+}
+
+function onWorkerMessage(e) {
+  const m = e.data;
+  if (m.type === 'ready') { S.delegate = m.delegate; return; }
+  if (m.type !== 'result') return;
+  workerBusy = false;
+  if (!m.landmarks) return;
+  const vdt = lastResultVT < 0 ? 1 / 30 : clamp(m.vt - lastResultVT, 0.012, 0.25);
+  lastResultVT = m.vt;
+  workerResult = { landmarks: m.landmarks, vdt, ms: m.ms };
+}
+
+function applyResult(landmarks, vdt, ms) {
+  lastFrameAt = performance.now();
+  S.detectMs = S.detectMs * 0.8 + ms * 0.2;
   // 사람마다 번호(slot)를 고정: 앞 프레임 위치와 가장 가까운 사람에게 같은 번호
-  S.landmarks = holdLost(assignSlots(res.landmarks || []));
+  S.landmarks = holdLost(assignSlots(landmarks));
   // full 모델이 이 폰에 너무 무거우면(평균 70ms 초과가 3초) 가벼운 모델로 교체
   if (S.trackMode === 'pose' && S.poseModel === 'full') {
     S.slowT = S.detectMs > 70 ? (S.slowT || 0) + vdt : 0;
     if (S.slowT > 3) {
       S.poseModel = 'lite'; S.slowT = 0;
-      const old = landmarker; landmarker = null; old.close();
-      initTracker('pose', S.delegate).catch(e => console.error(e));
       console.warn('full 모델이 느려서 lite로 전환');
+      if (worker) worker.postMessage({ type: 'init', opts: trackerOpts('pose'), force: S.delegate });
+      else { const old = landmarker; landmarker = null; old.close(); initTracker('pose', S.delegate).catch(err => console.error(err)); }
     }
   }
   if (S.trackMode === 'pose' && S.landmarks.length > 1 && S.stage) S.multi = true;
@@ -2293,7 +2329,34 @@ async function initCamera() {
   await new Promise(r => { if (video.readyState >= 2) r(); else video.onloadeddata = r; });
 }
 
+const trackerOpts = (mode) => ({ mode, poseModel: S.poseModel, maxPlayers: CFG.maxPlayers });
+async function initWorker(mode) {
+  if (typeof Worker === 'undefined' || typeof createImageBitmap === 'undefined') return false;
+  try {
+    const w = new Worker('js/pose-worker.js', { type: 'module' });
+    const ok = await new Promise((res) => {
+      const to = setTimeout(() => res(false), 25000);
+      w.onmessage = (e) => {
+        if (e.data.type === 'ready') { clearTimeout(to); S.delegate = e.data.delegate; res(true); }
+        if (e.data.type === 'error') { clearTimeout(to); console.warn('워커 초기화 실패:', e.data.message); res(false); }
+      };
+      w.onerror = (ev) => { clearTimeout(to); console.warn('워커 오류:', ev.message); res(false); };
+      w.postMessage({ type: 'init', opts: trackerOpts(mode) });
+    });
+    if (!ok) { w.terminate(); return false; }
+    w.onmessage = onWorkerMessage;
+    worker = w; workerBusy = false; workerResult = null; lastResultVT = -1;
+    S.worker = true;
+    return true;
+  } catch (e) { console.warn('워커 사용 불가 → 메인 스레드', e); return false; }
+}
+
 async function initTracker(mode, force = null) {
+  if (!force) {
+    if (worker) { worker.terminate(); worker = null; }
+    if (await initWorker(mode)) return;
+    S.worker = false;
+  }
   const fileset = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
   const make = (delegate) => mode === 'pose'
     ? PoseLandmarker.createFromOptions(fileset, {
@@ -2316,8 +2379,11 @@ async function initInput() {
   try {
     UI.loadState.textContent = '📷 카메라 권한을 허용해 주세요…';
     await initCamera();
-    if (landmarker && S.loadedMode !== S.trackMode) { landmarker.close(); landmarker = null; }
-    if (!landmarker) {
+    if ((landmarker || worker) && S.loadedMode !== S.trackMode) {
+      if (landmarker) { landmarker.close(); landmarker = null; }
+      if (worker) { worker.terminate(); worker = null; }
+    }
+    if (!landmarker && !worker) {
       UI.loadState.textContent = '🧠 인식 모델 불러오는 중… (처음 한 번, 몇 초 걸려요)';
       await initTracker(S.trackMode);
       S.loadedMode = S.trackMode;
@@ -2388,6 +2454,11 @@ function frame(ts) {
   const dt = Math.min(0.05, (ts - S.lastTs) / 1000 || 0.016);
   S.lastTs = ts;
   S.fps = S.fps * 0.9 + (1 / dt) * 0.1;
+  // 3초 넘게 40fps 미만이면 해상도·파티클을 낮춤
+  if (!lowQuality && S.state === 'play') {
+    slowFpsT = S.fps < 40 ? slowFpsT + dt : 0;
+    if (slowFpsT > 3) { lowQuality = true; resize(); console.warn('저사양 모드로 전환'); }
+  }
 
   if (S.useCam && S.camReady) track(ts, dt); else S.points = [];
   if (S.pointerPts.length) { S.points.push(...S.pointerPts); S.pointerPts = []; }
@@ -2459,8 +2530,9 @@ $('mapBtn').addEventListener('click', () => { initAudio(); S.useCam = true; show
 $('noCamBtn').addEventListener('click', () => { initAudio(); S.useCam = false; showMap(); });
 $('mapBack').addEventListener('click', showMenu);
 
-const musicBtn = $('musicBtn'), voiceBtn = $('voiceBtn');
-function syncToggles() { musicBtn.classList.toggle('on', SAVE.music); voiceBtn.classList.toggle('on', SAVE.voice); }
+const musicBtn = $('musicBtn'), voiceBtn = $('voiceBtn'), godBtn = $('godBtn');
+function syncToggles() { musicBtn.classList.toggle('on', SAVE.music); voiceBtn.classList.toggle('on', SAVE.voice); godBtn.classList.toggle('on', SAVE.god); }
+godBtn.addEventListener('click', () => { SAVE.god = !SAVE.god; persist(); syncToggles(); if (SAVE.god) say('무적 모드! 절대 지지 않아요!'); });
 musicBtn.addEventListener('click', () => {
   SAVE.music = !SAVE.music; persist(); syncToggles();
   if (SAVE.music && S.state === 'menu') startMusic(0, true); else if (!SAVE.music) stopMusic();
